@@ -4339,6 +4339,1200 @@ MQ_MOBILE.addEventListener('change', e => {
 
 </script>
 
+
+<!-- ═══ MovFlow Pipeline v2 · Gestor de Plantillas ═══ -->
+<script>
+/* ═══════════════════════════════════════════════════════════════════════
+   MovFlow · PIPELINE v2 — Gestor de Plantillas de Extracción
+   ───────────────────────────────────────────────────────────────────────
+   Módulos:
+     MFCleaner      → normalización y limpieza de campos
+     MFTemplates    → CRUD completo + plantillas predefinidas + localStorage
+     MFAIMapper     → llamada directa Groq con instrucciones completas
+     MFDocPipeline  → orquestador: limpieza → plantilla → IA → salida
+     MFPanelUI      → tab "Plantillas" con gestor completo
+   No toca: netlify/functions, extracción, APIs, auth, config previa.
+   ═══════════════════════════════════════════════════════════════════════ */
+(function () {
+  'use strict';
+  if (window.__MF_PIPELINE__) return;
+  window.__MF_PIPELINE__ = true;
+
+  const $  = id => document.getElementById(id);
+  const escn = s => String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+  /* ════════════════════════════════════════════════════════════
+     MÓDULO 1 · MOTOR DE LIMPIEZA  (MFCleaner)
+     ════════════════════════════════════════════════════════════ */
+  const MFCleaner = {
+    stripNoise(v) {
+      if (v == null) return '';
+      let s = String(v);
+      s = s.replace(/\u200B|\u200C|\u200D|\uFEFF/g, '');
+      s = s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
+      s = s.replace(/[\uE000-\uF8FF]/g, '');
+      s = s.replace(/\s*[-=_*·•~]{3,}\s*/g, ' ');
+      s = s.replace(/\[image:[^\]]*\]/gi, '');
+      s = s.replace(/https?:\/\/\S*(unsubscribe|tracking|click)\S*/gi, '');
+      return s;
+    },
+    fixSpaces(v) {
+      return String(v == null ? '' : v)
+        .replace(/[ \t\f\v]+/g, ' ').replace(/ ?\n ?/g, '\n')
+        .replace(/\n{3,}/g, '\n\n').replace(/\s+([.,;:!?)])/g, '$1')
+        .replace(/([(¿¡])\s+/g, '$1').trim();
+    },
+    fixEncoding(v) {
+      const map = {'Ã¡':'á','Ã©':'é','Ã­':'í','Ã³':'ó','Ãº':'ú','Ã±':'ñ','Ã'':'Ñ',
+        'Ã\u0081':'Á','Ã\u0089':'É','Ã\u008d':'Í','Ã\u0093':'Ó','Ã\u009a':'Ú',
+        'Â¿':'¿','Â¡':'¡','Â':'','â‚¬':'€','â€"':'–','â€"':'—',
+        'â€˜':'\u2018','â€™':'\u2019','â€œ':'\u201C','â€\u009d':'\u201D','â€¦':'…','Âº':'º','Âª':'ª'};
+      let s = String(v == null ? '' : v);
+      for (const k in map) s = s.split(k).join(map[k]);
+      return s;
+    },
+    unifyDate(v) {
+      if (v == null || v === '') return v;
+      const raw = String(v).trim();
+      const MESES = {enero:1,febrero:2,marzo:3,abril:4,mayo:5,junio:6,julio:7,agosto:8,
+        septiembre:9,setiembre:9,octubre:10,noviembre:11,diciembre:12,
+        ene:1,feb:2,mar:3,abr:4,may:5,jun:6,jul:7,ago:8,sep:9,sept:9,oct:10,nov:11,dic:12};
+      let m;
+      const pad = n => String(n).padStart(2,'0');
+      const ok  = (y,mo,d) => (y>=1900&&y<=2100&&mo>=1&&mo<=12&&d>=1&&d<=31)
+        ? `${y}-${pad(mo)}-${pad(d)}` : null;
+      if ((m = raw.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/)))
+        return ok(+m[1],+m[2],+m[3]) || raw;
+      if ((m = raw.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})$/))) {
+        let y = +m[3]; if (y < 100) y += y < 50 ? 2000 : 1900;
+        return ok(y,+m[2],+m[1]) || raw;
+      }
+      if ((m = raw.match(/(\d{1,2})\s*(?:de\s+)?([a-záéíóú]+)\s*(?:de\s+)?(\d{4})/i))) {
+        const mo = MESES[m[2].toLowerCase()];
+        if (mo) return ok(+m[3],mo,+m[1]) || raw;
+      }
+      return raw;
+    },
+    normalizeName(v) {
+      if (v == null || v === '') return v;
+      const low = new Set(['de','del','la','las','los','y','e','da','do','dos','van','von','di']);
+      return String(v).toLowerCase().replace(/\s+/g,' ').trim()
+        .split(' ').map((w,i) => {
+          if (i>0 && low.has(w)) return w;
+          return w.split('-').map(p => p.charAt(0).toUpperCase()+p.slice(1)).join('-');
+        }).join(' ');
+    },
+    standardizeAddress(v) {
+      if (v == null || v === '') return v;
+      let s = this.fixSpaces(String(v));
+      const rules = [
+        [/\bc\/\s*/gi,'Calle '],[/\bc\.\s*/gi,'Calle '],[/\bcalle\b/gi,'Calle'],
+        [/\bavda?\.?\b/gi,'Avenida'],[/\bavenida\b/gi,'Avenida'],
+        [/\bpza?\.?\b/gi,'Plaza'],[/\bplaza\b/gi,'Plaza'],
+        [/\bpº\b/gi,'Paseo'],[/\bpaseo\b/gi,'Paseo'],
+        [/\bnº\s*/gi,'Nº '],[/\bn°\s*/gi,'Nº '],[/\bnum\.?\s*/gi,'Nº '],
+        [/\bizq\.?\b/gi,'Izquierda'],[/\bdcha\.?\b/gi,'Derecha'],
+        [/\bpta\.?\b/gi,'Puerta'],[/\bpiso\b/gi,'Piso'],
+      ];
+      rules.forEach(([re,rep]) => { s = s.replace(re,rep); });
+      return s.replace(/\s+,/g,',').replace(/,\s*/g,', ').trim();
+    },
+    fixNumberFormat(v, opts = {}) {
+      if (v == null || v === '') return v;
+      let s = String(v).trim();
+      if (opts.kind === 'phone' || /^\+?\d[\d\s().-]{6,}$/.test(s)) {
+        const d = s.replace(/[^\d+]/g,'');
+        if (/^\+?34?\d{9}$/.test(d)) {
+          const n = d.replace(/^\+?34/,'');
+          return '+34 ' + n.replace(/(\d{3})(\d{3})(\d{3})/,'$1 $2 $3');
+        }
+      }
+      const num = s.replace(/[^\d.,-]/g,'');
+      if (/^\-?\d[\d.,]*$/.test(num)) {
+        let normalized = num;
+        if (num.includes(',') && num.includes('.')) {
+          normalized = num.lastIndexOf(',') > num.lastIndexOf('.')
+            ? num.replace(/\./g,'').replace(',', '.')
+            : num.replace(/,/g,'');
+        } else if (num.includes(',')) {
+          normalized = num.replace(',', '.');
+        }
+        const f = parseFloat(normalized);
+        if (!isNaN(f)) {
+          if (opts.kind === 'currency')
+            return new Intl.NumberFormat('es-ES',{style:'currency',currency:opts.currency||'EUR'}).format(f);
+          return new Intl.NumberFormat('es-ES').format(f);
+        }
+      }
+      return s;
+    },
+    validators: {
+      email(v)  { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v||'').trim()); },
+      phoneES(v){ return /^\+?34?\s?\d{3}\s?\d{3}\s?\d{3}$/.test(String(v||'').replace(/[.()\-]/g,'')); },
+      dni(v)    { const s=String(v||'').toUpperCase().trim(); const m=s.match(/^(\d{8})([A-Z])$/); if(!m)return false; return 'TRWAGMYFPDXBNJZSQVHLCKE'[+m[1]%23]===m[2]; },
+      nie(v)    { const s=String(v||'').toUpperCase().trim(); const m=s.match(/^([XYZ])(\d{7})([A-Z])$/); if(!m)return false; const n=({X:0,Y:1,Z:2}[m[1]])+m[2]; return 'TRWAGMYFPDXBNJZSQVHLCKE'[+n%23]===m[3]; },
+      iban(v)   { return /^ES\d{22}$/.test(String(v||'').replace(/\s/g,'').toUpperCase()); },
+      postalES(v){ return /^\d{5}$/.test(String(v||'').trim()); },
+      date(v)   { return /^\d{4}-\d{2}-\d{2}$/.test(String(v||'')); },
+      nonEmpty(v){ return String(v==null?'':v).trim().length>0; },
+    },
+    findDuplicates(fields) {
+      const seen = new Map(), dups = [];
+      const entries = Array.isArray(fields) ? fields.map((v,i)=>[i,v]) : Object.entries(fields||{});
+      for (const [k,v] of entries) {
+        const norm = String(v==null?'':v).toLowerCase().replace(/\s+/g,' ').trim();
+        if (!norm) continue;
+        if (seen.has(norm)) dups.push({keys:[seen.get(norm),k], value:v});
+        else seen.set(norm,k);
+      }
+      return dups;
+    },
+    process(rawFields, schema = {}) {
+      const report = { changed:[], duplicates:[], invalid:[], steps:[] };
+      const out = {};
+      const objEntries = Array.isArray(rawFields)
+        ? rawFields.map((v,i)=>['field_'+i, v]) : Object.entries(rawFields||{});
+      for (const [key, val] of objEntries) {
+        if (val && typeof val === 'object' && !Array.isArray(val)) { out[key]=val; continue; }
+        const type = (schema[key] && schema[key].type) || this._guessType(key, val);
+        let v = val;
+        const before = String(v==null?'':v);
+        v = this.fixEncoding(v); v = this.stripNoise(v);
+        switch (type) {
+          case 'date':     v = this.unifyDate(this.fixSpaces(v)); break;
+          case 'name':     v = this.normalizeName(this.fixSpaces(v)); break;
+          case 'address':  v = this.standardizeAddress(v); break;
+          case 'phone':    v = this.fixNumberFormat(v, {kind:'phone'}); break;
+          case 'currency': v = this.fixNumberFormat(v, {kind:'currency', currency:(schema[key]||{}).currency}); break;
+          case 'number':   v = this.fixNumberFormat(v); break;
+          case 'email':    v = this.fixSpaces(v).toLowerCase(); break;
+          default:         v = this.fixSpaces(v);
+        }
+        out[key] = v;
+        if (String(v) !== before) report.changed.push({key, before, after:v});
+        const rule = (schema[key] && schema[key].validate) || this._defaultValidator(type);
+        if (rule && String(v).trim() && !this.validators[rule](v))
+          report.invalid.push({key, value:v, rule});
+      }
+      report.duplicates = this.findDuplicates(out);
+      report.steps = ['encoding','noise','spaces','type-normalization','validation','dedup'];
+      return { fields: out, report };
+    },
+    _guessType(key='', val='') {
+      const k = key.toLowerCase(), s = String(val==null?'':val);
+      if (/mail|correo/.test(k)) return 'email';
+      if (/tel|phone|móvil|movil|whats/.test(k)) return 'phone';
+      if (/fecha|date|day|nacim/.test(k)) return 'date';
+      if (/nombre|name|apellido|cliente|titular/.test(k)) return 'name';
+      if (/direcc|address|calle|domicilio/.test(k)) return 'address';
+      if (/precio|importe|coste|total|price|amount|€|eur|presupuesto/.test(k)) return 'currency';
+      if (/\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}/.test(s)) return 'date';
+      if (/^[\s€$]*[\d.,]+[\s€$]*$/.test(s)) return 'number';
+      return 'text';
+    },
+    _defaultValidator(type) {
+      return {email:'email',phone:'phoneES',date:'date'}[type] || null;
+    },
+  };
+
+  /* ════════════════════════════════════════════════════════════
+     MÓDULO 2 · GESTOR DE PLANTILLAS  (MFTemplates)
+     CRUD completo + plantillas predefinidas + localStorage mfh_templates_v2
+     ════════════════════════════════════════════════════════════ */
+  const PREDEFINED_TEMPLATES = [
+    {
+      id: 'preset_contrato_laboral',
+      name: 'Contrato Laboral',
+      category: 'laboral',
+      icon: '👔',
+      preset: true,
+      fields: ['nombre_trabajador','dni_trabajador','domicilio_trabajador','nombre_empresa','cif_empresa','domicilio_empresa','puesto_trabajo','categoria_profesional','fecha_inicio','duracion_contrato','tipo_contrato','jornada_laboral','horario','salario_bruto_anual','salario_mensual','pagas_extraordinarias','periodo_prueba','convenio_colectivo','lugar_prestacion_servicios'],
+      instructions: `Eres un extractor especializado en contratos laborales españoles. 
+Extrae con precisión los siguientes datos del documento:
+- Datos del trabajador: nombre completo, DNI/NIE, domicilio
+- Datos del empleador: razón social, CIF, domicilio social
+- Condiciones laborales: puesto, categoría profesional, tipo de contrato (indefinido/temporal/obra y servicio/etc)
+- Jornada: horas semanales, horario, distribución
+- Retribución: salario bruto anual, mensual, número de pagas, complementos
+- Duración: fecha de inicio, duración si es temporal, período de prueba
+- Convenio colectivo aplicable
+- Lugar de prestación de servicios
+Si algún dato no aparece explícitamente, indica "No especificado". Devuelve siempre en español.`,
+    },
+    {
+      id: 'preset_contrato_mercantil',
+      name: 'Contrato Mercantil',
+      category: 'mercantil',
+      icon: '🤝',
+      preset: true,
+      fields: ['nombre_parte_a','cif_parte_a','representante_parte_a','nombre_parte_b','cif_parte_b','representante_parte_b','objeto_contrato','precio_servicios','forma_pago','duracion','penalizaciones','jurisdiccion','fecha_firma','confidencialidad','exclusividad'],
+      instructions: `Eres un extractor especializado en contratos mercantiles españoles.
+Extrae con precisión:
+- Partes contratantes: nombre/razón social, CIF/NIF, representantes legales, domicilios
+- Objeto del contrato: descripción exacta de servicios o productos
+- Condiciones económicas: precio, forma de pago, plazos, penalizaciones por demora
+- Vigencia: fecha de inicio, duración, prórroga automática si la hay
+- Cláusulas relevantes: exclusividad, confidencialidad, no competencia
+- Resolución de conflictos: jurisdicción, arbitraje
+- Fecha y lugar de firma
+Presta especial atención a importes, plazos y condiciones de resolución del contrato.`,
+    },
+    {
+      id: 'preset_contrato_alquiler',
+      name: 'Contrato de Alquiler',
+      category: 'inmobiliario',
+      icon: '🏠',
+      preset: true,
+      fields: ['nombre_arrendador','dni_arrendador','nombre_arrendatario','dni_arrendatario','direccion_inmueble','referencia_catastral','tipo_inmueble','uso_inmueble','superficie','renta_mensual','forma_pago','dia_pago','duracion_contrato','fecha_inicio','fecha_fin','fianza','deposito_adicional','actualizacion_renta','ici','gastos_comunidad','suministros','obras_permitidas'],
+      instructions: `Eres un extractor especializado en contratos de arrendamiento urbano (LAU) españoles.
+Extrae con precisión:
+- Arrendador: nombre completo, DNI/NIF, domicilio
+- Arrendatario(s): nombre completo, DNI/NIF, domicilio
+- Inmueble: dirección completa, referencia catastral, tipo (vivienda/local/garaje), superficie en m²
+- Condiciones económicas: renta mensual en €, día de pago, forma de pago, actualización IPC
+- Duración: fecha inicio, duración pactada, prórrogas
+- Garantías: fianza legal (número de mensualidades), depósito adicional
+- Gastos: quién paga IBI, comunidad, suministros
+- Condiciones especiales: mascotas, obras, subarriendo`,
+    },
+    {
+      id: 'preset_escritura',
+      name: 'Escritura Notarial',
+      category: 'notarial',
+      icon: '📜',
+      preset: true,
+      fields: ['tipo_escritura','notario','numero_protocolo','fecha_otorgamiento','lugar_otorgamiento','otorgante_vendedor','dni_vendedor','otorgante_comprador','dni_comprador','descripcion_bien','referencia_catastral','cargas','precio_venta','forma_pago','impuestos','registro_propiedad','tomo','folio','finca_registral'],
+      instructions: `Eres un extractor especializado en escrituras notariales españolas.
+Extrae con precisión:
+- Datos notariales: tipo de escritura, nombre del notario, número de protocolo, fecha y lugar
+- Partes: vendedor(es) y comprador(es) con DNI/NIF, estado civil, domicilio
+- Bien transmitido: descripción completa, referencia catastral, situación registral (tomo, folio, finca)
+- Cargas y gravámenes: hipotecas, servidumbres, condiciones resolutorias
+- Precio: importe total, forma de pago (efectivo, cheque, financiación)
+- Fiscalidad: impuestos mencionados (ITP, AJD, IVA, plusvalía)
+- Datos registrales: registro de la propiedad competente
+Incluye cualquier cláusula especial o condición suspensiva relevante.`,
+    },
+    {
+      id: 'preset_factura',
+      name: 'Factura',
+      category: 'fiscal',
+      icon: '🧾',
+      preset: true,
+      fields: ['numero_factura','fecha_emision','fecha_vencimiento','emisor_nombre','emisor_cif','emisor_direccion','emisor_email','receptor_nombre','receptor_cif','receptor_direccion','conceptos','base_imponible','tipo_iva','cuota_iva','irpf','total_factura','forma_pago','numero_cuenta','referencia_pedido'],
+      instructions: `Eres un extractor especializado en facturas comerciales españolas.
+Extrae con precisión:
+- Datos de la factura: número, fecha de emisión, fecha de vencimiento
+- Emisor (quien factura): nombre/razón social, CIF/NIF, dirección completa, email, teléfono
+- Receptor (quien paga): nombre/razón social, CIF/NIF, dirección completa
+- Líneas de factura: descripción de cada concepto, cantidad, precio unitario, descuento si lo hay
+- Importes: base imponible, tipo de IVA (%), cuota de IVA, retención IRPF si aplica, total a pagar
+- Forma de pago: transferencia/cheque/efectivo, número de cuenta IBAN si aparece
+- Referencias: número de pedido, albarán, proyecto asociado
+Distingue claramente entre base imponible, IVA y total.`,
+    },
+    {
+      id: 'preset_presupuesto',
+      name: 'Presupuesto',
+      category: 'fiscal',
+      icon: '💰',
+      preset: true,
+      fields: ['numero_presupuesto','fecha_presupuesto','validez_presupuesto','empresa_emisora','cif_emisora','cliente_nombre','cliente_cif','descripcion_trabajos','partidas','total_sin_iva','iva','total_con_iva','forma_pago','plazo_ejecucion','condiciones','garantia'],
+      instructions: `Eres un extractor especializado en presupuestos comerciales españoles.
+Extrae con precisión:
+- Identificación: número de presupuesto, fecha, validez (días/fecha límite)
+- Empresa emisora: nombre, CIF, dirección, teléfono, email, persona de contacto
+- Cliente: nombre/empresa, CIF, dirección, contacto
+- Trabajos/servicios: descripción completa de cada partida, unidades, precio unitario
+- Importes: subtotal por partida, descuentos, total sin IVA, IVA desglosado, total con IVA
+- Condiciones: forma de pago, plazo de ejecución/entrega
+- Garantías y condiciones especiales
+Presta atención a si hay varias opciones o alternativas presupuestadas.`,
+    },
+    {
+      id: 'preset_informe_medico',
+      name: 'Informe Médico',
+      category: 'sanitario',
+      icon: '🏥',
+      preset: true,
+      fields: ['paciente_nombre','paciente_dni','fecha_nacimiento','numero_historia','fecha_informe','medico_nombre','especialidad','centro_medico','motivo_consulta','antecedentes','enfermedad_actual','exploracion_fisica','pruebas_realizadas','diagnostico_principal','diagnosticos_secundarios','tratamiento','medicacion','recomendaciones','proxima_revision'],
+      instructions: `Eres un extractor especializado en informes médicos y clínicos en español.
+Extrae con precisión (respetando la confidencialidad, solo datos del documento):
+- Datos del paciente: nombre, DNI, fecha de nacimiento, número de historia clínica
+- Datos del episodio: fecha del informe/consulta, médico responsable, especialidad, centro
+- Anamnesis: motivo de consulta, enfermedad actual, antecedentes relevantes
+- Exploración y pruebas: hallazgos de exploración física, pruebas complementarias realizadas y resultados
+- Diagnóstico: diagnóstico principal (con código CIE si aparece), diagnósticos secundarios
+- Plan terapéutico: tratamiento pautado, medicación (nombre, dosis, pauta), duración
+- Seguimiento: recomendaciones, próxima revisión
+Usa terminología médica exacta del documento original.`,
+    },
+    {
+      id: 'preset_documento_legal',
+      name: 'Documento Legal',
+      category: 'legal',
+      icon: '⚖️',
+      preset: true,
+      fields: ['tipo_documento','tribunal_organismo','numero_expediente','fecha','partes_demandante','partes_demandado','abogados','procuradores','objeto_litigio','hechos','fundamentos_derecho','fallo_resolucion','plazos','recursos_posibles'],
+      instructions: `Eres un extractor especializado en documentos jurídicos y procesales españoles.
+Extrae con precisión:
+- Identificación: tipo de documento (sentencia/auto/decreto/escrito), órgano judicial u organismo, número de expediente/autos, fecha
+- Partes: demandante(s) y demandado(s) con representación (abogados, procuradores)
+- Objeto: materia del litigio o procedimiento
+- Antecedentes/Hechos: resumen de hechos relevantes
+- Fundamentos jurídicos: normas y jurisprudencia citadas
+- Fallo o resolución: decisión adoptada de forma literal y resumida
+- Plazos: plazos mencionados para recursos, cumplimiento, etc.
+- Recursos: recursos posibles y plazos para interponerlos
+Presta especial atención al fallo/resolución y a los plazos.`,
+    },
+    {
+      id: 'preset_acta',
+      name: 'Acta',
+      category: 'corporativo',
+      icon: '📋',
+      preset: true,
+      fields: ['tipo_acta','organo','empresa_entidad','fecha_reunion','hora_inicio','hora_fin','lugar','presidente','secretario','asistentes','quorum','orden_del_dia','acuerdos_adoptados','votaciones','proxima_reunion','firma_presidente','firma_secretario'],
+      instructions: `Eres un extractor especializado en actas de reuniones y órganos colegiados en español.
+Extrae con precisión:
+- Encabezado: tipo de acta (junta general/consejo/comité/comunidad), entidad, fecha, hora inicio y fin, lugar
+- Cargos: presidente, secretario (nombre y cargo)
+- Asistentes: lista completa de presentes y representados, quórum alcanzado
+- Orden del día: todos los puntos incluidos
+- Acuerdos: para cada punto del orden del día, el acuerdo adoptado, votación (votos a favor/en contra/abstenciones)
+- Próxima reunión: fecha y lugar si se menciona
+- Firmas: quiénes firman el acta
+Resume los debates solo si son relevantes para entender los acuerdos.`,
+    },
+    {
+      id: 'preset_contrato_compraventa',
+      name: 'Contrato de Compraventa',
+      category: 'mercantil',
+      icon: '🛒',
+      preset: true,
+      fields: ['vendedor_nombre','vendedor_cif','comprador_nombre','comprador_cif','descripcion_bien','precio','arras','forma_pago','fecha_entrega','garantias','resolucion_contrato','pacto_reserva_dominio','condicion_suspensiva','lugar_firma','fecha_firma'],
+      instructions: `Eres un extractor especializado en contratos de compraventa españoles (civil y mercantil).
+Extrae con precisión:
+- Partes: vendedor y comprador con identificación completa (nombre, CIF/NIF, domicilio, representación)
+- Bien vendido: descripción detallada, características, estado
+- Precio: importe total, arras si las hay (confirmatorias/penales/penitenciales), forma de pago y plazos
+- Entrega: fecha y lugar de entrega del bien
+- Garantías: vicios ocultos, garantía legal, garantía comercial
+- Condiciones especiales: condición suspensiva, pacto de reserva de dominio, arras
+- Resolución: causas de resolución, penalizaciones
+- Firma: lugar y fecha, partes firmantes`,
+    },
+  ];
+
+  const MFTemplates = {
+    KEY:     'mfh_templates_v2',
+    KEY_SEL: 'mfh_templates_v2_sel',
+
+    _load() { try { return JSON.parse(localStorage.getItem(this.KEY) || '[]'); } catch { return []; } },
+    _save(a) { try { localStorage.setItem(this.KEY, JSON.stringify(a)); return true; } catch { return false; } },
+
+    /* Lista combinada: predefinidas + personalizadas */
+    list() {
+      const custom = this._load();
+      return [...PREDEFINED_TEMPLATES, ...custom];
+    },
+    listCustom() { return this._load(); },
+
+    get(id) { return this.list().find(t => t.id === id) || null; },
+
+    add(name, content, meta = {}) {
+      const arr = this._load();
+      const tpl = {
+        id:          'tpl_' + Date.now().toString(36) + Math.random().toString(36).slice(2,6),
+        name:        (name || 'Plantilla sin nombre').trim(),
+        category:    meta.category || 'personalizada',
+        icon:        meta.icon || '📝',
+        preset:      false,
+        contentType: meta.contentType || 'text',   // 'text' | 'pdf' | 'docx'
+        content:     content || '',                 // texto plano o base64
+        fields:      meta.fields || [],
+        instructions: meta.instructions || '',
+        notes:       meta.notes || '',
+        createdAt:   new Date().toISOString(),
+        updatedAt:   new Date().toISOString(),
+        sizeKB:      content ? Math.round((content.length * (meta.contentType === 'text' ? 1 : 0.75)) / 1024) : 0,
+      };
+      arr.push(tpl);
+      this._save(arr);
+      return tpl;
+    },
+
+    update(id, patch = {}) {
+      /* No se pueden editar plantillas predefinidas */
+      const arr = this._load();
+      const i   = arr.findIndex(t => t.id === id);
+      if (i < 0) return null;
+      arr[i] = { ...arr[i], ...patch, id, updatedAt: new Date().toISOString() };
+      this._save(arr);
+      return arr[i];
+    },
+
+    remove(id) {
+      if (PREDEFINED_TEMPLATES.find(t => t.id === id)) return false; // no borrar predefinidas
+      const arr = this._load().filter(t => t.id !== id);
+      this._save(arr);
+      if (this.getSelected() === id) this.select(null);
+      return true;
+    },
+
+    duplicate(id) {
+      const src = this.get(id);
+      if (!src) return null;
+      return this.add(src.name + ' (copia)', src.content || '', {
+        category:     src.category,
+        icon:         src.icon,
+        contentType:  src.contentType || 'text',
+        fields:       [...(src.fields || [])],
+        instructions: src.instructions || '',
+        notes:        src.notes || '',
+      });
+    },
+
+    select(id)       { try { localStorage.setItem(this.KEY_SEL, id||''); } catch {} },
+    getSelected()    { try { return localStorage.getItem(this.KEY_SEL) || null; } catch { return null; } },
+
+    getCategoryLabel(cat) {
+      return {
+        laboral:'Laboral', mercantil:'Mercantil', inmobiliario:'Inmobiliario',
+        notarial:'Notarial', fiscal:'Fiscal', sanitario:'Sanitario',
+        legal:'Legal', corporativo:'Corporativo', personalizada:'Personalizada',
+      }[cat] || cat;
+    },
+  };
+
+  /* ════════════════════════════════════════════════════════════
+     MÓDULO 3 · MAPEADOR IA  (MFAIMapper)
+     Llama directamente a /.netlify/functions/extract con el contenido
+     del PDF + las instrucciones completas de la plantilla.
+     Si no está disponible, degrada a real-estate-intel o reglas locales.
+     ════════════════════════════════════════════════════════════ */
+  const MFAIMapper = {
+    endpointExtract:   '/.netlify/functions/extract',
+    endpointRealEstate:'/.netlify/functions/real-estate-intel',
+
+    /* Construye el prompt completo usando las instrucciones de la plantilla */
+    _buildPrompt(cleanFields, template) {
+      const fields    = (template && template.fields && template.fields.length)
+        ? template.fields : Object.keys(cleanFields);
+      const instrucctions = (template && template.instructions)
+        ? template.instructions
+        : 'Extrae y estructura la información del documento.';
+
+      const dataStr = Object.entries(cleanFields)
+        .map(([k,v]) => `- ${k}: ${v==null?'':v}`).join('\n');
+
+      return `${instrucctions}
+
+DATOS EXTRAÍDOS DEL DOCUMENTO:
+${dataStr}
+
+CAMPOS A RELLENAR (devuelve SOLO un objeto JSON con estos campos):
+${fields.map(f => `"${f}": "..."`).join(',\n')}
+
+Responde ÚNICAMENTE con el objeto JSON. Sin explicaciones adicionales.`;
+    },
+
+    async understand(cleanFields, template) {
+      const prompt = this._buildPrompt(cleanFields, template);
+      const fields = (template && template.fields && template.fields.length)
+        ? template.fields : Object.keys(cleanFields);
+
+      /* Intento 1: endpoint /extract con prompt directo */
+      try {
+        const resp = await fetch(this.endpointExtract, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ prompt, mode: 'template_mapping' }),
+        });
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data && (data.mapping || data.fields || data.result)) {
+            const mapping = data.mapping || data.fields || data.result;
+            return { ok:true, source:'groq_extract', mapping, ai: { resumen: data.resumen || null } };
+          }
+        }
+      } catch (_) {}
+
+      /* Intento 2: real-estate-intel reutilizando estructura sintética */
+      try {
+        const resp = await fetch(this.endpointRealEstate, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({
+            country: 'es',
+            email: {
+              subject: 'Mapeo de plantilla: ' + (template ? template.name : 'documento'),
+              body:    prompt,
+              fromEmail: '',
+            },
+          }),
+        });
+        if (resp.ok) {
+          const data = await resp.json();
+          return { ok:true, source:'groq_rei', ...this._mergeREI(cleanFields, fields, data) };
+        }
+      } catch (_) {}
+
+      /* Fallback: mapeo por reglas local */
+      return {
+        ok:     true,
+        source: 'rules',
+        note:   'IA no disponible — mapeo automático por coincidencia de nombres',
+        mapping: this._ruleMap(cleanFields, fields),
+        ai:     null,
+      };
+    },
+
+    _mergeREI(cleanFields, tplFields, aiData) {
+      const mapping = this._ruleMap(cleanFields, tplFields);
+      const ds  = (aiData.enrichment && aiData.enrichment.datosEstructurados) || {};
+      const ext = aiData.extraction || {};
+      tplFields.forEach(f => {
+        if (mapping[f] != null && mapping[f] !== '') return;
+        const lk = f.toLowerCase();
+        if (/ubic|direc|ciudad/.test(lk) && (ds.ubicacion || ext.location?.raw))
+          mapping[f] = ds.ubicacion || ext.location?.raw;
+        else if (/precio|import|presup/.test(lk) && ds.presupuesto)
+          mapping[f] = ds.presupuesto;
+      });
+      return { mapping, ai: {
+        confidence: aiData.confidence,
+        resumen:    aiData.enrichment && aiData.enrichment.resumenEjecutivo,
+        raw:        aiData,
+      }};
+    },
+
+    _ruleMap(cleanFields, tplFields) {
+      const out  = {};
+      const norm = s => s.toLowerCase().replace(/[^a-z0-9áéíóúñ]/gi,'');
+      const src  = Object.entries(cleanFields).map(([k,v]) => [norm(k), k, v]);
+      tplFields.forEach(f => {
+        const nf  = norm(f);
+        const hit = src.find(([nk]) => nk === nf)
+                 || src.find(([nk]) => nk.includes(nf) || nf.includes(nk));
+        out[f] = hit ? hit[2] : '';
+      });
+      return out;
+    },
+  };
+
+  /* ════════════════════════════════════════════════════════════
+     MÓDULO 4 · PIPELINE ORQUESTADOR  (MFDocPipeline)
+     ════════════════════════════════════════════════════════════ */
+  const MFDocPipeline = {
+    async run(extractedFields, { templateId = null, schema = {}, useAI = true } = {}) {
+      const stages = [];
+
+      /* 3 · limpieza */
+      const { fields: clean, report } = MFCleaner.process(extractedFields, schema);
+      stages.push({ stage:'cleaning', report });
+
+      /* 4 · plantilla */
+      const template = templateId ? MFTemplates.get(templateId) : null;
+
+      /* 5 · IA o reglas */
+      let mapping = null, aiMeta = null, source = 'none';
+      if (template) {
+        if (useAI) {
+          const r = await MFAIMapper.understand(clean, template);
+          mapping = r.mapping; aiMeta = r.ai; source = r.source;
+        } else {
+          mapping = MFAIMapper._ruleMap(clean, template.fields || Object.keys(clean));
+          source  = 'rules';
+        }
+      }
+
+      return {
+        finalFields: mapping || clean,
+        report,
+        template,
+        mapping,
+        source,
+        ai: aiMeta,
+        stages,
+      };
+    },
+  };
+
+  /* ════════════════════════════════════════════════════════════
+     CSS DEL PANEL
+     ════════════════════════════════════════════════════════════ */
+  const CSS = `
+  #panel-plantillas { padding: 0; }
+  .mfp-wrap { padding: 20px; max-width: 1100px; }
+  .mfp-hd   { display:flex; align-items:center; gap:10px; margin-bottom:20px; }
+  .mfp-hd-title { font-size:17px; font-weight:700; color:var(--text-1); }
+  .mfp-hd-sub   { font-size:12.5px; color:var(--text-3); margin-top:2px; }
+
+  /* Barra superior: búsqueda + filtro + acciones */
+  .mfp-toolbar { display:flex; align-items:center; gap:8px; margin-bottom:16px; flex-wrap:wrap; }
+  .mfp-search  { flex:1; min-width:160px; padding:7px 10px; border:1px solid var(--border);
+                 border-radius:var(--r-sm); font-size:13px; background:var(--surface);
+                 color:var(--text-1); outline:none; }
+  .mfp-search:focus { border-color:var(--accent); }
+  .mfp-filter  { padding:7px 10px; border:1px solid var(--border); border-radius:var(--r-sm);
+                 font-size:12.5px; background:var(--surface); color:var(--text-1); cursor:pointer; }
+  .mfp-btn     { padding:7px 14px; border-radius:var(--r-sm); border:1px solid var(--border);
+                 font-size:12.5px; font-weight:600; cursor:pointer; white-space:nowrap;
+                 background:var(--surface); color:var(--text-1); transition:background .15s; }
+  .mfp-btn:hover    { background:var(--hover); }
+  .mfp-btn.primary  { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .mfp-btn.primary:hover { filter:brightness(1.1); }
+  .mfp-btn.danger   { color:#c0392b; border-color:#fca5a5; }
+  .mfp-btn.danger:hover { background:#fef2f2; }
+
+  /* Grid de plantillas */
+  .mfp-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:12px; }
+  .mfp-card { background:var(--surface); border:1px solid var(--border); border-radius:var(--r);
+              padding:14px; cursor:pointer; transition:border-color .15s, box-shadow .15s;
+              display:flex; flex-direction:column; gap:8px; position:relative; }
+  .mfp-card:hover       { border-color:var(--accent); box-shadow:0 2px 8px rgba(0,0,0,.08); }
+  .mfp-card.sel         { border-color:var(--accent); background:rgba(37,99,235,.04); }
+  .mfp-card.preset      { border-left:3px solid var(--accent); }
+  .mfp-card-top         { display:flex; align-items:flex-start; gap:10px; }
+  .mfp-card-ico         { font-size:22px; line-height:1; flex-shrink:0; }
+  .mfp-card-info        { flex:1; min-width:0; }
+  .mfp-card-name        { font-size:13.5px; font-weight:700; color:var(--text-1);
+                          white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .mfp-card-cat         { font-size:11px; color:var(--text-3); text-transform:uppercase;
+                          letter-spacing:.05em; margin-top:2px; }
+  .mfp-card-fields      { font-size:11.5px; color:var(--text-2); line-height:1.5; }
+  .mfp-card-sel-badge   { position:absolute; top:10px; right:10px; font-size:10px;
+                          background:var(--accent); color:#fff; padding:2px 6px;
+                          border-radius:20px; font-weight:700; }
+  .mfp-card-actions     { display:flex; gap:4px; margin-top:4px; flex-wrap:wrap; }
+  .mfp-ico-btn          { background:none; border:1px solid var(--border); border-radius:4px;
+                          padding:3px 7px; font-size:11.5px; cursor:pointer; color:var(--text-2);
+                          transition:background .12s; }
+  .mfp-ico-btn:hover    { background:var(--hover); }
+
+  /* Sección ejecución */
+  .mfp-exec-sec  { background:var(--surface); border:1px solid var(--border);
+                   border-radius:var(--r); padding:16px; margin-top:20px; }
+  .mfp-exec-title{ font-size:13px; font-weight:700; color:var(--text-1); margin-bottom:12px; }
+  .mfp-exec-row  { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:8px; }
+  .mfp-sel-in    { padding:7px 10px; border:1px solid var(--border); border-radius:var(--r-sm);
+                   font-size:13px; background:var(--surface); color:var(--text-1);
+                   min-width:220px; max-width:320px; }
+  .mfp-steps     { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px; }
+  .mfp-step      { font-size:11px; padding:3px 8px; border-radius:20px;
+                   background:var(--hover); color:var(--text-3); border:1px solid var(--border); }
+  .mfp-step.done { background:rgba(16,185,129,.12); color:#059669; border-color:#6ee7b7; }
+
+  /* Resultado */
+  .mfp-result    { margin-top:14px; }
+  .mfp-badge     { display:inline-block; font-size:11px; padding:2px 7px;
+                   border-radius:20px; font-weight:700; margin-right:4px; }
+  .mfp-badge.ok  { background:rgba(16,185,129,.12); color:#059669; }
+  .mfp-badge.warn{ background:rgba(245,158,11,.12); color:#d97706; }
+  .mfp-badge.err { background:rgba(239,68,68,.12);  color:#dc2626; }
+  .mfp-kv        { display:grid; grid-template-columns:auto 1fr; gap:4px 14px;
+                   font-size:12.5px; margin-top:8px; }
+  .mfp-kv b      { color:var(--text-2); font-weight:600; }
+  .mfp-kv del    { color:var(--text-3); }
+  .mfp-empty     { color:var(--text-3); font-size:13px; text-align:center; padding:32px; }
+
+  /* Modal crear/editar */
+  .mfp-modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,.45);
+                       z-index:9999; display:flex; align-items:center; justify-content:center; }
+  .mfp-modal         { background:var(--surface); border-radius:var(--r); padding:24px;
+                       width:min(520px,94vw); max-height:88vh; overflow-y:auto;
+                       box-shadow:0 8px 32px rgba(0,0,0,.18); }
+  .mfp-modal-hd      { font-size:15px; font-weight:700; color:var(--text-1); margin-bottom:16px; }
+  .mfp-modal-row     { margin-bottom:12px; }
+  .mfp-modal-label   { font-size:12px; font-weight:600; color:var(--text-2);
+                       margin-bottom:4px; display:block; }
+  .mfp-modal-input   { width:100%; padding:8px 10px; border:1px solid var(--border);
+                       border-radius:var(--r-sm); font-size:13px; background:var(--surface);
+                       color:var(--text-1); box-sizing:border-box; }
+  .mfp-modal-input:focus { outline:none; border-color:var(--accent); }
+  .mfp-modal-ta      { width:100%; padding:8px 10px; border:1px solid var(--border);
+                       border-radius:var(--r-sm); font-size:12.5px; background:var(--surface);
+                       color:var(--text-1); box-sizing:border-box; resize:vertical;
+                       min-height:90px; font-family:var(--mono); }
+  .mfp-modal-ta:focus{ outline:none; border-color:var(--accent); }
+  .mfp-modal-foot    { display:flex; gap:8px; justify-content:flex-end; margin-top:20px; }
+  .mfp-drop          { border:2px dashed var(--border); border-radius:var(--r-sm);
+                       padding:20px; text-align:center; color:var(--text-3); font-size:13px;
+                       cursor:pointer; transition:border-color .15s; }
+  .mfp-drop:hover, .mfp-drop.over { border-color:var(--accent); color:var(--accent); }
+  .mfp-drop-hint     { font-size:11.5px; margin-top:6px; }
+
+  @media(max-width:640px){
+    .mfp-grid { grid-template-columns:1fr; }
+    .mfp-toolbar { flex-direction:column; align-items:stretch; }
+    .mfp-kv { grid-template-columns:1fr; }
+    .mfp-sel-in { min-width:0; width:100%; }
+  }
+  `;
+
+  /* ════════════════════════════════════════════════════════════
+     PANEL HTML
+     ════════════════════════════════════════════════════════════ */
+  const PANEL_HTML = `
+  <div class="mfp-wrap">
+    <div class="mfp-hd">
+      <div>
+        <div class="mfp-hd-title">📋 Gestor de Plantillas</div>
+        <div class="mfp-hd-sub">Plantillas predefinidas + personalizadas · La IA adapta la extracción al formato de cada plantilla</div>
+      </div>
+    </div>
+
+    <div class="mfp-toolbar">
+      <input class="mfp-search" id="mfpSearch" type="text" placeholder="Buscar plantilla…">
+      <select class="mfp-filter" id="mfpCatFilter">
+        <option value="">Todas las categorías</option>
+        <option value="laboral">Laboral</option>
+        <option value="mercantil">Mercantil</option>
+        <option value="inmobiliario">Inmobiliario</option>
+        <option value="notarial">Notarial</option>
+        <option value="fiscal">Fiscal</option>
+        <option value="sanitario">Sanitario</option>
+        <option value="legal">Legal</option>
+        <option value="corporativo">Corporativo</option>
+        <option value="personalizada">Personalizada</option>
+      </select>
+      <button class="mfp-btn primary" id="mfpNewTpl">＋ Nueva plantilla</button>
+      <button class="mfp-btn" id="mfpUploadTpl">⬆ Subir archivo</button>
+      <input type="file" id="mfpFileInput" accept=".pdf,.docx,.txt,.md" style="display:none">
+    </div>
+
+    <div class="mfp-grid" id="mfpGrid"></div>
+
+    <div class="mfp-exec-sec">
+      <div class="mfp-exec-title">⚡ Ejecutar extracción con plantilla</div>
+      <div class="mfp-steps">
+        <span class="mfp-step">1 · Selección email/carpeta</span>
+        <span class="mfp-step">2 · Limpieza de datos</span>
+        <span class="mfp-step" data-s="template">3 · Aplicar plantilla</span>
+        <span class="mfp-step" data-s="ai">4 · IA Groq</span>
+        <span class="mfp-step" data-s="output">5 · Resultado</span>
+      </div>
+      <div class="mfp-exec-row">
+        <select class="mfp-sel-in" id="mfpTplSelect"></select>
+        <label style="font-size:12.5px;color:var(--text-2);display:flex;align-items:center;gap:6px;cursor:pointer">
+          <input type="checkbox" id="mfpUseAI" checked> Usar IA (Groq)
+        </label>
+        <button class="mfp-btn primary" id="mfpRun">Ejecutar</button>
+      </div>
+      <div style="font-size:12px;color:var(--text-3)">
+        Toma el email/carpeta activo del Extractor. La plantilla guía qué extraer y cómo estructurarlo.
+      </div>
+      <div id="mfpResult"></div>
+    </div>
+  </div>`;
+
+  /* ════════════════════════════════════════════════════════════
+     UI CONTROLLER
+     ════════════════════════════════════════════════════════════ */
+  const MFPanelUI = {
+
+    mount() {
+      if ($('panel-plantillas')) return;
+      const st = document.createElement('style');
+      st.textContent = CSS;
+      document.head.appendChild(st);
+
+      /* Tab */
+      const tabs = document.querySelector('.nav-tabs');
+      if (tabs) {
+        const tab = document.createElement('div');
+        tab.className = 'nav-tab';
+        tab.dataset.panel = 'plantillas';
+        tab.textContent = 'Plantillas';
+        tab.addEventListener('click', () => this.activate(tab));
+        tabs.appendChild(tab);
+      }
+
+      /* Panel */
+      const main = document.querySelector('main') || $('panel-extractor')?.parentElement;
+      if (main) {
+        const panel = document.createElement('div');
+        panel.className = 'panel';
+        panel.id = 'panel-plantillas';
+        panel.innerHTML = PANEL_HTML;
+        main.appendChild(panel);
+      }
+
+      this.bind();
+      this.renderGrid();
+      this.renderSelect();
+    },
+
+    activate(tab) {
+      document.querySelectorAll('.nav-tab').forEach(x => x.classList.remove('active'));
+      document.querySelectorAll('.panel').forEach(x => x.classList.remove('active'));
+      tab.classList.add('active');
+      $('panel-plantillas').classList.add('active');
+      this.renderGrid();
+      this.renderSelect();
+    },
+
+    bind() {
+      $('mfpSearch').addEventListener('input',    () => this.renderGrid());
+      $('mfpCatFilter').addEventListener('change',() => this.renderGrid());
+      $('mfpNewTpl').addEventListener('click',    () => this.openModal(null));
+      $('mfpUploadTpl').addEventListener('click', () => $('mfpFileInput').click());
+      $('mfpFileInput').addEventListener('change', e => this.onFileUpload(e));
+      $('mfpRun').addEventListener('click',       () => this.execute());
+    },
+
+    /* ── Grid de plantillas ── */
+    renderGrid() {
+      const grid    = $('mfpGrid'); if (!grid) return;
+      const q       = ($('mfpSearch')?.value || '').toLowerCase();
+      const cat     = $('mfpCatFilter')?.value || '';
+      const selId   = MFTemplates.getSelected();
+      let   tpls    = MFTemplates.list();
+
+      if (q)   tpls = tpls.filter(t => t.name.toLowerCase().includes(q) || (t.category||'').includes(q));
+      if (cat) tpls = tpls.filter(t => t.category === cat);
+
+      if (!tpls.length) {
+        grid.innerHTML = `<div class="mfp-empty" style="grid-column:1/-1">
+          No hay plantillas${q ? ` para "${escn(q)}"` : ''}. Crea una nueva o sube un archivo.</div>`;
+        return;
+      }
+
+      grid.innerHTML = '';
+      tpls.forEach(t => {
+        const isSel = t.id === selId;
+        const card  = document.createElement('div');
+        card.className = 'mfp-card' + (t.preset ? ' preset' : '') + (isSel ? ' sel' : '');
+        card.innerHTML = `
+          ${isSel ? '<span class="mfp-card-sel-badge">✓ Activa</span>' : ''}
+          <div class="mfp-card-top">
+            <div class="mfp-card-ico">${t.icon || '📝'}</div>
+            <div class="mfp-card-info">
+              <div class="mfp-card-name">${escn(t.name)}</div>
+              <div class="mfp-card-cat">${escn(MFTemplates.getCategoryLabel(t.category || 'personalizada'))}</div>
+            </div>
+          </div>
+          <div class="mfp-card-fields">${(t.fields||[]).slice(0,4).map(f => escn(f.replace(/_/g,' '))).join(' · ')}${(t.fields||[]).length > 4 ? ` · +${(t.fields||[]).length - 4} más` : ''}</div>
+          <div class="mfp-card-actions">
+            <button class="mfp-ico-btn" data-act="use"  title="${isSel ? 'Deseleccionar' : 'Usar esta plantilla'}">${isSel ? '✅ Activa' : '○ Usar'}</button>
+            ${!t.preset ? `<button class="mfp-ico-btn" data-act="edit"  title="Editar">✏️ Editar</button>` : `<button class="mfp-ico-btn" data-act="view"  title="Ver campos">👁 Ver</button>`}
+            <button class="mfp-ico-btn" data-act="dup"  title="Duplicar">⧉ Duplicar</button>
+            ${!t.preset ? `<button class="mfp-ico-btn danger" data-act="del" title="Eliminar">🗑 Eliminar</button>` : ''}
+          </div>`;
+
+        card.querySelector('[data-act="use"]').onclick = e => {
+          e.stopPropagation();
+          MFTemplates.select(isSel ? null : t.id);
+          this.renderGrid(); this.renderSelect();
+        };
+        const editBtn = card.querySelector('[data-act="edit"]');
+        if (editBtn) editBtn.onclick = e => { e.stopPropagation(); this.openModal(t.id); };
+        const viewBtn = card.querySelector('[data-act="view"]');
+        if (viewBtn) viewBtn.onclick = e => { e.stopPropagation(); this.openModal(t.id, true); };
+        card.querySelector('[data-act="dup"]').onclick = e => {
+          e.stopPropagation();
+          MFTemplates.duplicate(t.id);
+          this.renderGrid(); this.renderSelect();
+        };
+        const delBtn = card.querySelector('[data-act="del"]');
+        if (delBtn) delBtn.onclick = e => {
+          e.stopPropagation();
+          if (confirm(`¿Eliminar la plantilla "${t.name}"?`)) {
+            MFTemplates.remove(t.id);
+            this.renderGrid(); this.renderSelect();
+          }
+        };
+        card.addEventListener('click', () => {
+          MFTemplates.select(isSel ? null : t.id);
+          this.renderGrid(); this.renderSelect();
+        });
+        grid.appendChild(card);
+      });
+    },
+
+    renderSelect() {
+      const sel   = $('mfpTplSelect'); if (!sel) return;
+      const selId = MFTemplates.getSelected();
+      const tpls  = MFTemplates.list();
+      sel.innerHTML = '<option value="">— Sin plantilla (solo limpieza) —</option>' +
+        tpls.map(t => `<option value="${t.id}" ${t.id===selId?'selected':''}>${escn(t.icon||'📝')} ${escn(t.name)}</option>`).join('');
+    },
+
+    /* ── Modal crear / editar / ver ── */
+    openModal(id, readOnly = false) {
+      const tpl = id ? MFTemplates.get(id) : null;
+      const isPreset = tpl && tpl.preset;
+      const ro = readOnly || isPreset;
+
+      const overlay = document.createElement('div');
+      overlay.className = 'mfp-modal-overlay';
+      overlay.innerHTML = `
+        <div class="mfp-modal">
+          <div class="mfp-modal-hd">${ro ? '👁 Ver plantilla' : (id ? '✏️ Editar plantilla' : '＋ Nueva plantilla')}</div>
+          ${ro && isPreset ? '<div style="font-size:12px;color:var(--text-3);margin-bottom:12px">Las plantillas predefinidas no se pueden editar. Duplícalas para personalizarlas.</div>' : ''}
+          <div class="mfp-modal-row">
+            <label class="mfp-modal-label">Nombre</label>
+            <input class="mfp-modal-input" id="mfpMName" type="text" placeholder="Nombre de la plantilla" value="${escn(tpl?.name||'')}" ${ro?'readonly':''}>
+          </div>
+          <div class="mfp-modal-row" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <div>
+              <label class="mfp-modal-label">Categoría</label>
+              <select class="mfp-modal-input" id="mfpMCat" ${ro?'disabled':''}>
+                ${['laboral','mercantil','inmobiliario','notarial','fiscal','sanitario','legal','corporativo','personalizada'].map(c=>
+                  `<option value="${c}" ${(tpl?.category||'personalizada')===c?'selected':''}>${MFTemplates.getCategoryLabel(c)}</option>`
+                ).join('')}
+              </select>
+            </div>
+            <div>
+              <label class="mfp-modal-label">Icono (emoji)</label>
+              <input class="mfp-modal-input" id="mfpMIcon" type="text" placeholder="📝" value="${escn(tpl?.icon||'📝')}" ${ro?'readonly':''} maxlength="4">
+            </div>
+          </div>
+          <div class="mfp-modal-row">
+            <label class="mfp-modal-label">Campos esperados <span style="color:var(--text-3)">(separados por coma)</span></label>
+            <input class="mfp-modal-input" id="mfpMFields" type="text" placeholder="nombre, fecha, importe, …" value="${escn((tpl?.fields||[]).join(', '))}" ${ro?'readonly':''}>
+          </div>
+          <div class="mfp-modal-row">
+            <label class="mfp-modal-label">Instrucciones para la IA <span style="color:var(--text-3)">(qué extraer y cómo)</span></label>
+            <textarea class="mfp-modal-ta" id="mfpMInstr" rows="6" placeholder="Describe qué información debe extraer la IA de los documentos con esta plantilla…" ${ro?'readonly':''}>${escn(tpl?.instructions||'')}</textarea>
+          </div>
+          <div class="mfp-modal-row">
+            <label class="mfp-modal-label">Notas internas</label>
+            <textarea class="mfp-modal-ta" id="mfpMNotes" rows="2" placeholder="Notas opcionales sobre el uso de esta plantilla" ${ro?'readonly':''}>${escn(tpl?.notes||'')}</textarea>
+          </div>
+          <div class="mfp-modal-foot">
+            <button class="mfp-btn" id="mfpMCancel">Cerrar</button>
+            ${!ro ? `<button class="mfp-btn primary" id="mfpMSave">${id ? 'Guardar cambios' : 'Crear plantilla'}</button>` : ''}
+            ${isPreset ? `<button class="mfp-btn primary" id="mfpMDup">⧉ Duplicar y editar</button>` : ''}
+          </div>
+        </div>`;
+
+      document.body.appendChild(overlay);
+      overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+      overlay.querySelector('#mfpMCancel').onclick = () => overlay.remove();
+
+      const saveBtn = overlay.querySelector('#mfpMSave');
+      if (saveBtn) {
+        saveBtn.onclick = () => {
+          const name   = overlay.querySelector('#mfpMName').value.trim();
+          if (!name) { alert('El nombre es obligatorio.'); return; }
+          const fields = overlay.querySelector('#mfpMFields').value.split(',').map(s=>s.trim()).filter(Boolean);
+          const patch  = {
+            name,
+            category:     overlay.querySelector('#mfpMCat').value,
+            icon:         overlay.querySelector('#mfpMIcon').value.trim() || '📝',
+            fields,
+            instructions: overlay.querySelector('#mfpMInstr').value.trim(),
+            notes:        overlay.querySelector('#mfpMNotes').value.trim(),
+          };
+          if (id) MFTemplates.update(id, patch);
+          else    MFTemplates.add(name, '', { ...patch, contentType:'text' });
+          overlay.remove();
+          this.renderGrid(); this.renderSelect();
+        };
+      }
+
+      const dupBtn = overlay.querySelector('#mfpMDup');
+      if (dupBtn) {
+        dupBtn.onclick = () => {
+          const dup = MFTemplates.duplicate(id);
+          overlay.remove();
+          this.renderGrid(); this.renderSelect();
+          if (dup) this.openModal(dup.id);
+        };
+      }
+    },
+
+    /* ── Subir archivo (PDF / DOCX / TXT) ── */
+    async onFileUpload(e) {
+      const file = e.target?.files?.[0]; if (!file) return;
+      e.target.value = '';
+
+      const name = file.name.replace(/\.[^.]+$/, '');
+      const ext  = file.name.split('.').pop().toLowerCase();
+      const validExts = ['pdf','docx','txt','md'];
+      if (!validExts.includes(ext)) {
+        alert('Formato no admitido. Usa PDF, DOCX, TXT o MD.'); return;
+      }
+
+      const suggestedName = prompt('Nombre de la plantilla:', name);
+      if (suggestedName === null) return;
+
+      let content = '', contentType = 'text';
+
+      if (ext === 'txt' || ext === 'md') {
+        content     = await file.text();
+        contentType = 'text';
+      } else if (ext === 'pdf' || ext === 'docx') {
+        /* Guardamos como base64 para futura extracción server-side */
+        content = await new Promise((res, rej) => {
+          const r = new FileReader();
+          r.onload  = () => res(String(r.result).split(',')[1] || '');
+          r.onerror = () => rej(new Error('Error leyendo archivo'));
+          r.readAsDataURL(file);
+        });
+        contentType = ext;
+      }
+
+      const tpl = MFTemplates.add(suggestedName || name, content, {
+        contentType,
+        category: 'personalizada',
+        icon: ext === 'pdf' ? '📄' : ext === 'docx' ? '📝' : '📃',
+      });
+
+      MFTemplates.select(tpl.id);
+      this.renderGrid();
+      this.renderSelect();
+      this.openModal(tpl.id); // abrir para completar instrucciones
+    },
+
+    /* ── Fuente de datos del Extractor ── */
+    _gatherSource() {
+      try {
+        const St = window.S;
+        let email = null;
+        if (window.SelectionState && SelectionState.selected && SelectionState.selected.size) {
+          const id = [...SelectionState.selected][0];
+          email = (St.emails||[]).find(e => String(e.uid||e.id)===String(id));
+        }
+        if (!email && St && St.filtered && St.filtered.length) email = St.filtered[0];
+        if (!email && St && St.emails && St.emails.length)    email = St.emails[0];
+        if (!email) return null;
+        const c = window.ContactExtractor ? ContactExtractor.extract(email) : {};
+        return {
+          nombre:   c.name    || '',
+          email:    c.email   || email.fromEmail || '',
+          telefono: c.phone   || '',
+          direccion:c.address || '',
+          asunto:   email.subject || '',
+          fecha:    email.date    || '',
+          cuerpo:   (window.BodyCleaner
+            ? BodyCleaner.summary(email.body||email.snippet||'')
+            : (email.snippet||'')),
+          ...(c.fields || {}),
+        };
+      } catch { return null; }
+    },
+
+    /* ── Ejecutar pipeline ── */
+    async execute() {
+      const res = $('mfpResult');
+      const src = this._gatherSource();
+      if (!src) {
+        res.innerHTML = '<div class="mfp-badge warn" style="display:block;margin-top:10px">Selecciona primero un email o carpeta en el panel Extractor.</div>';
+        return;
+      }
+
+      const templateId = $('mfpTplSelect').value || null;
+      const useAI      = $('mfpUseAI').checked;
+      res.innerHTML    = '<div style="color:var(--text-3);font-size:13px;padding:10px 0">⏳ Procesando…</div>';
+      this._markSteps([]);
+
+      let out;
+      try {
+        out = await MFDocPipeline.run(src, { templateId, useAI });
+      } catch (err) {
+        res.innerHTML = `<div class="mfp-badge err" style="display:block;margin-top:10px">Error: ${escn(err.message)}</div>`;
+        return;
+      }
+
+      const done = ['template'];
+      if (out.source && out.source !== 'none') done.push('ai');
+      done.push('output');
+      this._markSteps(done);
+
+      res.innerHTML = this._renderResult(out);
+      const dl = $('mfpDownload');
+      if (dl) dl.onclick = () => this._exportJSON(out.finalFields, out.template);
+    },
+
+    _markSteps(done) {
+      document.querySelectorAll('#panel-plantillas .mfp-step[data-s]').forEach(s => {
+        s.classList.toggle('done', done.includes(s.dataset.s));
+      });
+    },
+
+    _renderResult(out) {
+      const r = out.report;
+      const sourceLabel = {
+        groq_extract: '🤖 Groq (extract)',
+        groq_rei:     '🤖 Groq (IA)',
+        rules:        '⚙️ Reglas locales',
+        none:         '—',
+      }[out.source] || out.source;
+
+      let h = '<div style="margin-top:14px">';
+      h += `<div style="margin-bottom:10px">`;
+      h += `<span class="mfp-badge ok">${r.changed.length} campos normalizados</span>`;
+      if (r.duplicates.length) h += `<span class="mfp-badge warn">${r.duplicates.length} duplicados</span>`;
+      if (r.invalid.length)   h += `<span class="mfp-badge err">${r.invalid.length} inválidos</span>`;
+      if (out.source !== 'none') h += `<span class="mfp-badge ok">${sourceLabel}</span>`;
+      if (out.template) h += `<span class="mfp-badge ok">📋 ${escn(out.template.name)}</span>`;
+      h += '</div>';
+
+      if (r.changed.length) {
+        h += '<div class="mfp-kv" style="margin-top:8px">';
+        r.changed.slice(0,10).forEach(c => {
+          h += `<b>${escn(c.key)}</b><span><del>${escn(String(c.before).slice(0,40))}</del> → ${escn(String(c.after).slice(0,60))}</span>`;
+        });
+        h += '</div>';
+      }
+
+      if (out.mapping && Object.keys(out.mapping).length) {
+        h += '<div style="font-size:12px;font-weight:700;color:var(--text-2);margin:14px 0 6px">📋 Campos mapeados a la plantilla</div>';
+        h += '<div class="mfp-kv">';
+        Object.entries(out.mapping).forEach(([k,v]) => {
+          h += `<b>${escn(k.replace(/_/g,' '))}</b><span>${v ? escn(String(v)) : '<span style="color:var(--text-3)">— vacío —</span>'}</span>`;
+        });
+        h += '</div>';
+      }
+
+      if (out.ai?.resumen) {
+        h += `<div style="margin-top:12px;font-size:12.5px;color:var(--text-2);font-style:italic;background:rgba(37,99,235,.05);padding:10px;border-radius:6px">🎯 ${escn(out.ai.resumen)}</div>`;
+      }
+
+      h += `<div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap">
+        <button class="mfp-btn primary" id="mfpDownload">⬇ Descargar JSON</button>
+      </div>`;
+      h += '</div>';
+      return h;
+    },
+
+    _exportJSON(fields, template) {
+      const payload = {
+        generatedBy: 'MovFlow Plantillas v2',
+        generatedAt: new Date().toISOString(),
+        template:    template ? { id: template.id, name: template.name, category: template.category } : null,
+        fields,
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href = url; a.download = 'movflow-extraccion-' + Date.now() + '.json';
+      a.click(); URL.revokeObjectURL(url);
+    },
+  };
+
+  /* ── Exponer namespace público ── */
+  window.MFCleaner     = MFCleaner;
+  window.MFTemplates   = MFTemplates;
+  window.MFAIMapper    = MFAIMapper;
+  window.MFDocPipeline = MFDocPipeline;
+
+  /* ── Arranque diferido ── */
+  function boot() {
+    if (document.querySelector('.nav-tabs')) MFPanelUI.mount();
+    else setTimeout(boot, 300);
+  }
+  if (document.readyState === 'loading')
+    document.addEventListener('DOMContentLoaded', boot);
+  else boot();
+
+})();
+</script>
+
 </div><!-- #app -->
 </body>
 </html>

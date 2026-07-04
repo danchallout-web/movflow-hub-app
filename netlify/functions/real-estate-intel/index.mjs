@@ -21,7 +21,7 @@
 
 const CORS = { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' };
 const GROQ_API = 'https://api.groq.com/openai/v1/chat/completions';
-const GROQ_MODEL = 'llama-3.3-70b-versatile';
+const GROQ_MODEL = 'qwen/qwen3.6-27b';
 
 // ── Country module loader (decoupled, expandable) ──
 const SUPPORTED_COUNTRIES = ['es']; // add 'uk','us','eu','latam','me' as modules ship
