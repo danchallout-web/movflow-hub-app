@@ -1702,11 +1702,13 @@ const RealEstateIntel = {
       html += '</div></div>';
     }
 
-    // Enrichment errors (honest surfacing)
+    // Enrichment errors (friendly — never expose raw internal errors)
     if (enr._error || enr._note) {
-      html += '<div class="rei-sec"><div class="rei-note">' +
-        (enr._ruleBasedOnly ? '⚙️ Análisis basado en reglas (IA no configurada). ' : '') +
-        esc(enr._note || enr._error || '') + '</div></div>';
+      const isJsonErr = (enr._error || '').includes('json_parse') || (enr._error || '').includes('parse');
+      const friendlyNote = isJsonErr
+        ? 'El análisis se completó con información parcial.'
+        : (enr._ruleBasedOnly ? '⚙️ Análisis basado en reglas (IA no configurada).' : esc(enr._note || ''));
+      if (friendlyNote) html += '<div class="rei-sec"><div class="rei-note">' + friendlyNote + '</div></div>';
     }
 
     panel.innerHTML = html;
@@ -4344,20 +4346,27 @@ MQ_MOBILE.addEventListener('change', e => {
 </script>
 
 
-<!-- ═══ MovFlow · DocIntel — Biblioteca de Modelos Documentales ═══ -->
+
+<!-- ═══ MovFlow · DocIntel v2 — Analista Documental Inteligente ═══ -->
 <script>
 /* ═══════════════════════════════════════════════════════════════════════
-   MovFlow · DOC INTEL v1
+   MovFlow · DOC INTEL v2
    ───────────────────────────────────────────────────────────────────────
+   Flujo obligatorio (5 pasos):
+     1. Comprensión completa del email (quién, qué, por qué, acciones)
+     2. Interpretación IA — resumen, tipo, intención, prioridad, confianza
+     3. Propuestas inteligentes de documentos a generar
+     4. Matching con biblioteca de modelos documentales
+     5. Extracción estructurada (último paso, no el primero)
+
    Módulos:
-     MFDocModels   → biblioteca persistente de modelos documentales
-                     (localStorage mfh_doc_models_v1)
-                     Aprende SOLO estructura/estilo, NUNCA datos personales
-     MFDocPreview  → motor de interpretación previa con Groq
-                     Devuelve: tipo, secciones, campos esperados, modelo
-                     de referencia, confianza — ANTES de extraer
-     MFDocIntelUI  → bloque "Vista previa de interpretación IA"
-                     se inyecta bajo el botón REI en renderDetail()
+     Anonymizer     → anonimiza datos personales antes de persistir
+     MFDocModels    → biblioteca persistente (localStorage mfh_doc_models_v1)
+     MFEmailAnalyst → motor principal: comprende, interpreta, propone
+     MFDocIntelUI   → panel "🧠 Vista previa de interpretación IA"
+
+   NUNCA persiste: nombres, DNI, IBAN, emails, teléfonos, fechas,
+   importes, direcciones, firmas, empresas, logotipos.
    ═══════════════════════════════════════════════════════════════════════ */
 (function () {
   'use strict';
@@ -4367,6 +4376,9 @@ MQ_MOBILE.addEventListener('change', e => {
   const escI = s => String(s == null ? '' : s)
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
+  /* ══════════════════════════════════════════════════════
+     ANONYMIZER — elimina datos personales antes de guardar
+  ══════════════════════════════════════════════════════ */
   const Anonymizer = {
     strip(text) {
       if (!text) return '';
@@ -4382,19 +4394,17 @@ MQ_MOBILE.addEventListener('change', e => {
       s = s.replace(/\b\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}\b/g, '[FECHA]');
       s = s.replace(/\b(?:DON|DOÑA|Don|Doña|D\.|Dña\.)\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+(?:de\s+la?\s+)?[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){1,4}\b/g, '[NOMBRE]');
       s = s.replace(/\b(?:Calle|C\/|C\.|Plaza|Plza?\.?|Avenida|Avda?\.?|Paseo|Pº)\s+[^,\n]{3,40}(?:,\s*\d+[^,\n]{0,20})?\b/gi, '[DIRECCIÓN]');
-      s = s.replace(/\b\d{5}\b(?=\s*,?\s*[A-ZÁÉÍÓÚÑ])/g, '[CP]');
-      s = s.replace(/\bn[uú]mero\s+(?:de\s+protocolo\s+)?\d+[\/-]?\d*\b/gi, '[EXPEDIENTE]');
       return s;
     },
     extractStructure(text) {
       const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
       const sections = [], styleMarkers = [];
       lines.forEach(line => {
-        if (/^[IVXLC]+\.-?\s+[A-ZÁÉÍÓÚÑ]/.test(line) || /^(PRIMERO|SEGUNDO|TERCERO|CUARTO|QUINTO|SEXTO|SÉPTIMO|OCTAVO|NOVENO|DÉCIM)/i.test(line))
+        if (/^(PRIMERO|SEGUNDO|TERCERO|CUARTO|QUINTO|SEXTO|SÉPTIMO|OCTAVO|NOVENO|DÉCIM)/i.test(line))
           sections.push({ type:'clausula', label: this.strip(line).slice(0,80) });
         else if (/^[A-ZÁÉÍÓÚÑ\s]{10,}$/.test(line) && line.length < 60)
           sections.push({ type:'titulo', label: this.strip(line) });
-        const markers = line.match(/\b(EXPONEN|ACUERDAN|REUNIDOS|MANIFIESTAN|DECLARAN|En virtud|En prueba|Por su parte|De una parte|Y de otra|No obstante|Sin perjuicio|En su virtud)\b/gi);
+        const markers = line.match(/\b(EXPONEN|ACUERDAN|REUNIDOS|MANIFIESTAN|En virtud|Por su parte|De una parte|Y de otra)\b/gi);
         if (markers) markers.forEach(m => styleMarkers.push(m.toLowerCase()));
       });
       return {
@@ -4407,6 +4417,9 @@ MQ_MOBILE.addEventListener('change', e => {
     },
   };
 
+  /* ══════════════════════════════════════════════════════
+     BIBLIOTECA DE MODELOS DOCUMENTALES
+  ══════════════════════════════════════════════════════ */
   const MFDocModels = {
     KEY: 'mfh_doc_models_v1',
     _load() { try { return JSON.parse(localStorage.getItem(this.KEY)||'[]'); } catch { return []; } },
@@ -4436,231 +4449,516 @@ MQ_MOBILE.addEventListener('change', e => {
       const arr = this._load(); arr.push(model); this._save(arr); return model;
     },
     remove(id) { this._save(this._load().filter(m=>m.id!==id)); },
-    findBestMatch(text) {
+    findBestMatch(docCategory) {
       const models = this._load(); if (!models.length) return null;
-      const struct  = Anonymizer.extractStructure(text);
-      const markers = struct.styleMarkers;
-      const anon    = Anonymizer.strip(text);
-      let best=null, bestScore=-1;
-      models.forEach(m => {
-        let score=0;
-        const mMarkers = m.styleSignature?.markers||[];
-        score += markers.filter(mk=>mMarkers.includes(mk)).length * 3;
-        score += Math.max(0,5-Math.abs((m.styleSignature?.sectionCount||0)-struct.sectionCount));
-        score += Math.abs((m.styleSignature?.avgLineLen||0)-struct.avgLineLength)<20?3:1;
-        if (m.category==='arrendamiento'&&/arrendamiento|arrendat|alquiler/i.test(anon)) score+=4;
-        if (m.category==='laboral'&&/trabajador|empresa|salario|jornada/i.test(anon)) score+=4;
-        if (m.category==='mercantil'&&/factura|proveedor|servicio|cliente/i.test(anon)) score+=4;
-        if (score>bestScore){bestScore=score;best={model:m,score};}
-      });
-      return best&&bestScore>2?best:null;
+      const hit = models.find(m => m.category === docCategory);
+      if (hit) return { model: hit, score: 8 };
+      return null;
     },
   };
 
-  const MFDocPreview = {
-    _localClassify(text) {
-      const t=text.toLowerCase();
-      const rules=[
-        {type:'Contrato de Arrendamiento',cat:'arrendamiento',score:(t.match(/arrendamiento|arrendatari|arrendador|renta mensual|fianza|inquilino/g)||[]).length},
-        {type:'Contrato Laboral',cat:'laboral',score:(t.match(/trabajador|empleador|salario|jornada|convenio colectivo/g)||[]).length},
-        {type:'Contrato Mercantil',cat:'mercantil',score:(t.match(/prestación de servicios|facturación|honorarios|proveedor/g)||[]).length},
-        {type:'Factura',cat:'fiscal',score:(t.match(/factura|base imponible|iva|tipo impositivo/g)||[]).length},
-        {type:'Escritura Notarial',cat:'notarial',score:(t.match(/notario|protocolo|escritura|registro de la propiedad/g)||[]).length},
-        {type:'Documento Judicial',cat:'judicial',score:(t.match(/juzgado|sentencia|auto|demandante|demandado|fallo/g)||[]).length},
-        {type:'Informe Médico',cat:'sanitario',score:(t.match(/diagnóstico|paciente|tratamiento|exploración/g)||[]).length},
-        {type:'Acta',cat:'corporativo',score:(t.match(/acta|reunión|asistentes|orden del día|acuerdo/g)||[]).length},
-        {type:'Presupuesto',cat:'fiscal',score:(t.match(/presupuesto|partida|validez|plazo de ejecución/g)||[]).length},
-        {type:'Comunicación General',cat:'general',score:1},
+  /* Modelo inicial semilla */
+  (function seedInitialModel(){
+    const arr = MFDocModels._load();
+    if (arr.find(m=>m.id==='mdl_seed_arrendamiento')) return;
+    arr.push({
+      id:'mdl_seed_arrendamiento',
+      name:'Contrato de Arrendamiento Temporal de Vivienda',
+      category:'arrendamiento',
+      description:'Contrato LAU temporal entre arrendador y arrendatarios, con fianza, prohibiciones y avalistas solidarios.',
+      addedAt:new Date().toISOString(),
+      structure:{sectionCount:16,sections:[],styleMarkers:['exponen','acuerdan','reunidos','en su virtud','de una parte','y de otra'],avgLineLength:72,totalLines:180},
+      styleSignature:{markers:['exponen','acuerdan','reunidos','en su virtud'],avgLineLen:72,sectionCount:16,language:'es',register:'jurídico'},
+      styleExcerpt:'CONTRATO DE ARRENDAMIENTO TEMPORAL DE VIVIENDA\n\nREUNIDOS\n\nDe una parte PARTE ARRENDADORA: [NOMBRE] con [ID].\nY de otra parte PARTE ARRENDATARIA: [NOMBRE] con [ID].\n\nACUERDAN\nPRIMERO. OBJETO. Arrendamiento temporal.\nSEGUNDO. DURACIÓN. Desde [FECHA] hasta [FECHA].\nTERCERO. RENTA. [IMPORTE] mensuales.\nNOVENO. FIANZA. [IMPORTE].',
+      sectionLabels:['OBJETO','DURACIÓN','RENTA','PAGO','CONDICIONES','PROHIBICIONES','SERVICIOS','FIANZA','AVALISTAS','LITIGIOS'],
+    });
+    MFDocModels._save(arr);
+  })();
+
+  /* ══════════════════════════════════════════════════════
+     MOTOR PRINCIPAL — MFEmailAnalyst
+     5 pasos: comprender → interpretar → proponer → matching → extraer
+  ══════════════════════════════════════════════════════ */
+  const MFEmailAnalyst = {
+
+    /* ── PASO 1+2: Clasificación local robusta con umbral de confianza ── */
+    _localUnderstand(email) {
+      const subject = (email.subject || '').toLowerCase();
+      const body    = (email.body || email.snippet || '').toLowerCase();
+      const from    = (email.fromEmail || email.from || '').toLowerCase();
+      const full    = subject + ' ' + body + ' ' + from;
+
+      const categories = [
+        {
+          type:'Comunicación Laboral / RRHH',
+          cat:'laboral',
+          icon:'💼',
+          priority:'media',
+          signals: ['infojobs','trabajar','empleo','entrevista','candidatura','oferta de trabajo','proceso de selección','reclutador','linkedin','indeed','glassdoor','curriculum','cv','contrato laboral','nómina','convenio'],
+        },
+        {
+          type:'Factura / Documento Fiscal',
+          cat:'fiscal',
+          icon:'🧾',
+          priority:'alta',
+          signals: ['factura','invoice','base imponible','iva','tipo impositivo','n° de factura','número de factura','importe total','vencimiento','pago pendiente'],
+        },
+        {
+          type:'Contrato / Documento Legal',
+          cat:'legal',
+          icon:'⚖️',
+          priority:'alta',
+          signals: ['contrato','cláusula','acuerdan','exponen','reunidos','arrendamiento','compraventa','escritura','notario','protocolo','firma del contrato'],
+        },
+        {
+          type:'Comunicación Bancaria / Financiera',
+          cat:'bancario',
+          icon:'🏦',
+          priority:'alta',
+          signals: ['banco','cuenta corriente','transferencia','iban','swift','extracto','cargo','abono','domiciliación','tarjeta','préstamo','hipoteca','inversión'],
+        },
+        {
+          type:'Notificación Administrativa / Legal',
+          cat:'administrativo',
+          icon:'🏛️',
+          priority:'alta',
+          signals: ['ministerio','ayuntamiento','hacienda','seguridad social','agencia tributaria','juzgado','notificación','expediente','resolución','sanción','requerimiento'],
+        },
+        {
+          type:'Correo Comercial / Marketing',
+          cat:'marketing',
+          icon:'📢',
+          priority:'baja',
+          signals: ['oferta','descuento','promoción','newsletter','suscripción','unsubscribe','publicidad','campaña','marketing','promo','% de descuento','oferta especial'],
+        },
+        {
+          type:'Comunicación Inmobiliaria',
+          cat:'inmobiliario',
+          icon:'🏠',
+          priority:'media',
+          signals: ['alquiler','venta de piso','inmueble','metros cuadrados','habitaciones','portal inmobiliario','idealista','fotocasa','vivienda en venta','arrendamiento'],
+        },
+        {
+          type:'Informe / Documento Técnico',
+          cat:'tecnico',
+          icon:'📊',
+          priority:'media',
+          signals: ['informe','reporte','análisis','resultado','conclusión','auditoría','diagnóstico','memoria','estudio técnico'],
+        },
+        {
+          type:'Comunicación Sanitaria / Médica',
+          cat:'sanitario',
+          icon:'🏥',
+          priority:'alta',
+          signals: ['cita médica','hospital','clínica','diagnóstico','tratamiento','paciente','médico','consulta','receta','prueba médica'],
+        },
+        {
+          type:'Correo Personal / Informal',
+          cat:'personal',
+          icon:'✉️',
+          priority:'media',
+          signals: ['hola','saludos','gracias','te escribo','espero que estés','un abrazo','buenas tardes','buenos días'],
+        },
       ];
-      rules.sort((a,b)=>b.score-a.score); return rules[0];
-    },
-    _detectSections(text) {
-      const lines=text.split('\n').map(l=>l.trim()).filter(Boolean);
-      const found=[], markers=[];
-      lines.forEach(line=>{
-        if(/^(PRIMERO|SEGUNDO|TERCERO|CUARTO|QUINTO|SEXTO|SÉPTIMO|OCTAVO|NOVENO|DÉCIM|UNDÉCIM|DUODÉCIM)/i.test(line)) found.push('📌 '+line.slice(0,60));
-        if(/^[IVXLC]+\.-/i.test(line)) found.push('§ '+line.slice(0,60));
-        if(/^(REUNIDOS|EXPONEN|ACUERDAN|MANIFIESTAN|CLÁUSULAS|ANTECEDENTES|FIRMAS)/i.test(line)) markers.push(line.slice(0,40));
-      });
-      return {sections:found.slice(0,12),markers:markers.slice(0,8)};
-    },
-    _expectedFields(docType) {
-      const map={
-        'Contrato de Arrendamiento':['arrendador','arrendatario','inmueble','renta','duración','fianza','gastos','prohibiciones'],
-        'Contrato Laboral':['trabajador','empresa','puesto','salario','jornada','duración','convenio'],
-        'Factura':['emisor','receptor','conceptos','base_imponible','IVA','total','forma_pago'],
-        'Escritura Notarial':['notario','otorgantes','bien','precio','cargas','registro'],
-        'Documento Judicial':['órgano','partes','objeto','hechos','fallo','plazos'],
-        'Acta':['entidad','fecha','asistentes','orden_del_día','acuerdos'],
-      };
-      for(const key in map){if(docType.includes(key.split(' ')[1]||key))return map[key];}
-      return ['tipo_documento','fecha','partes','objeto','condiciones'];
-    },
-    async analyze(text, emailSubject='') {
-      const localClass = this._localClassify(text);
-      const sectInfo   = this._detectSections(text);
-      const bestModel  = MFDocModels.findBestMatch(text);
-      const expected   = this._expectedFields(localClass.type);
-      let confidence   = Math.min(95,30+localClass.score*8);
-      let aiEnrichment = null;
-      try {
-        const prompt=`Analiza este documento y responde SOLO con JSON válido sin markdown:
-{"tipo_documento":"nombre exacto","confianza":número_0_100,"secciones_detectadas":["s1","s2"],"campos_principales":["c1","c2"],"estilo_redaccion":"breve descripción","registro_linguistico":"jurídico|administrativo|comercial|técnico","resumen_estructura":"1-2 frases"}
 
-TEXTO (primeras 800 chars): ${text.slice(0,800)}
-Asunto: ${emailSubject}`;
-        const resp=await fetch('/.netlify/functions/extract',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt,mode:'template_mapping'})});
-        if(resp.ok){const data=await resp.json();if(data.ok&&data.mapping){aiEnrichment=data.mapping;if(aiEnrichment.confianza)confidence=Math.round((confidence+aiEnrichment.confianza)/2);}}
-      } catch(_){}
-      return {
-        docType:  aiEnrichment?.tipo_documento||localClass.type,
-        category: localClass.cat,
-        confidence,
-        sections: aiEnrichment?.secciones_detectadas||sectInfo.sections,
-        markers:  sectInfo.markers,
-        expected: aiEnrichment?.campos_principales||expected,
-        style:    aiEnrichment?.estilo_redaccion||null,
-        register: aiEnrichment?.registro_linguistico||'jurídico',
-        summary:  aiEnrichment?.resumen_estructura||null,
-        refModel: bestModel?{name:bestModel.model.name,score:bestModel.score}:null,
-        source:   aiEnrichment?'groq+local':'local',
+      // Puntuar cada categoría
+      const scored = categories.map(cat => {
+        let score = 0;
+        cat.signals.forEach(sig => {
+          if (full.includes(sig)) score += (sig.length > 8 ? 3 : 2);
+        });
+        return { ...cat, score };
+      });
+
+      scored.sort((a,b) => b.score - a.score);
+      const top = scored[0];
+
+      // Umbral de confianza: si la puntuación es demasiado baja, no clasificar
+      const MIN_SCORE = 2;
+      if (top.score < MIN_SCORE) {
+        return {
+          type: 'Clasificación no determinada',
+          cat:  'desconocido',
+          icon: '❓',
+          priority: 'media',
+          confidence: 20,
+          undetermined: true,
+        };
+      }
+
+      // Confianza: basada en puntuación relativa y diferencia con el segundo
+      const second   = scored[1]?.score || 0;
+      const gap      = top.score - second;
+      const baseConf = Math.min(90, 40 + top.score * 4 + gap * 5);
+
+      return { ...top, confidence: baseConf, undetermined: false };
+    },
+
+    /* ── Detecta datos clave del email ── */
+    _extractKeyInfo(email) {
+      const body    = email.body || email.snippet || '';
+      const subject = email.subject || '';
+      const from    = email.fromName || email.fromEmail || email.from || '';
+
+      const urls = (body.match(/https?:\/\/[^\s<>"']{10,}/g) || []).slice(0,3);
+      const dates = (body.match(/\b\d{1,2}\s+de\s+[a-záéíóúñ]+\s+de\s+\d{4}\b|\b\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}\b/gi) || []).slice(0,3);
+      const hasAttachments = (email.attachments||[]).length > 0;
+
+      return { urls, dates, hasAttachments, from, subject };
+    },
+
+    /* ── PASO 3: Proponer documentos a generar según el tipo ── */
+    _proposeDocs(catInfo, keyInfo) {
+      const proposals = {
+        laboral:       ['📋 Resumen de la oferta laboral','📝 Respuesta profesional al reclutador','📅 Recordatorio de entrevista','✅ Checklist de preparación'],
+        fiscal:        ['📄 Resumen de factura','📊 Registro contable','⚠️ Alerta de vencimiento','📁 Ficha de proveedor/cliente'],
+        legal:         ['📜 Resumen ejecutivo del contrato','⚠️ Lista de cláusulas clave','📅 Cronología de plazos','✅ Checklist de firma'],
+        bancario:      ['📊 Resumen de movimiento','📝 Registro de transacción','⚠️ Alerta de cargo relevante'],
+        administrativo:['📋 Resumen de notificación','📅 Cronología de plazos legales','✉️ Borrador de respuesta formal','📁 Ficha de expediente'],
+        marketing:     ['🗂️ Registro de comunicación comercial'],
+        inmobiliario:  ['🏠 Ficha del inmueble','📋 Comparativa de propiedades','📅 Cronología de visitas'],
+        tecnico:       ['📊 Resumen ejecutivo','📋 Extracto de conclusiones','✅ Lista de acciones recomendadas'],
+        sanitario:     ['📅 Recordatorio de cita','📋 Resumen médico','📝 Instrucciones de seguimiento'],
+        personal:      ['📝 Borrador de respuesta'],
+        desconocido:   ['📋 Resumen general del correo','📝 Nota de seguimiento'],
       };
+      const list = proposals[catInfo.cat] || proposals.desconocido;
+      if (keyInfo.hasAttachments) list.push('📎 Índice de documentos adjuntos');
+      if (keyInfo.urls.length)    list.push('🔗 Registro de enlaces relevantes');
+      if (keyInfo.dates.length)   list.push('📅 Cronología de fechas detectadas');
+      return list;
+    },
+
+    /* ── PASO 1+2+3+4: Análisis completo con Groq ── */
+    async analyze(email) {
+      const body    = email.body || email.snippet || '';
+      const subject = email.subject || '';
+      const from    = email.fromName || email.fromEmail || email.from || '';
+
+      // Análisis local robusto primero
+      const localClass = this._localUnderstand(email);
+      const keyInfo    = this._extractKeyInfo(email);
+      const proposals  = this._proposeDocs(localClass, keyInfo);
+      const refModel   = MFDocModels.findBestMatch(localClass.cat);
+
+      // Resultado base (funciona sin IA)
+      const base = {
+        // Paso 1: comprensión
+        remitente:    from,
+        asunto:       subject,
+        urls:         keyInfo.urls,
+        fechas:       keyInfo.dates,
+        adjuntos:     keyInfo.hasAttachments,
+        // Paso 2: interpretación
+        docType:      localClass.type,
+        category:     localClass.cat,
+        icon:         localClass.icon,
+        priority:     localClass.priority,
+        confidence:   localClass.confidence,
+        undetermined: localClass.undetermined,
+        resumen:      null,
+        intencion:    null,
+        accionRecomendada: null,
+        // Paso 3: propuestas
+        proposals,
+        // Paso 4: modelo de referencia
+        refModel:     refModel ? { name: refModel.model.name, cat: refModel.model.category } : null,
+        source:       'local',
+      };
+
+      // Enriquecer con Groq
+      try {
+        const prompt = `Eres un analista documental experto. Analiza este correo electrónico y devuelve ÚNICAMENTE un objeto JSON válido (sin markdown, sin explicaciones).
+
+CORREO:
+De: ${from}
+Asunto: ${subject}
+Cuerpo (primeros 1000 chars): ${body.slice(0,1000)}
+
+Devuelve este JSON exacto:
+{
+  "tipo_documento": "clasificación exacta del tipo de correo o documento",
+  "resumen_ejecutivo": "2-3 frases explicando de qué trata el correo",
+  "intencion_remitente": "qué quiere conseguir quien envía este correo",
+  "accion_recomendada": "qué debería hacer el receptor con este correo",
+  "nivel_prioridad": "alta|media|baja",
+  "confianza": número entre 0 y 100,
+  "categoria": "laboral|fiscal|legal|bancario|administrativo|marketing|inmobiliario|tecnico|sanitario|personal|desconocido",
+  "documentos_sugeridos": ["doc1","doc2","doc3"]
+}`;
+
+        const resp = await fetch('/.netlify/functions/extract', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ prompt, mode: 'template_mapping' }),
+        });
+
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data.ok && data.mapping && typeof data.mapping === 'object') {
+            const ai = data.mapping;
+            // Validar que la IA dio una clasificación con suficiente confianza
+            const aiConf = Number(ai.confianza) || 0;
+            const aiCat  = ai.categoria || 'desconocido';
+            const finalConf = Math.round((localClass.confidence + aiConf) / 2);
+
+            base.source           = 'groq+local';
+            base.resumen          = ai.resumen_ejecutivo || null;
+            base.intencion        = ai.intencion_remitente || null;
+            base.accionRecomendada= ai.accion_recomendada || null;
+            base.confidence       = finalConf;
+            base.undetermined     = finalConf < 30;
+
+            // Actualizar tipo/categoría solo si la IA tiene más confianza que el análisis local
+            if (aiConf >= 50 && ai.tipo_documento) {
+              base.docType  = ai.tipo_documento;
+              base.category = aiCat;
+              base.priority = ai.nivel_prioridad || localClass.priority;
+              // Re-calcular propuestas con la categoría de la IA
+              const aiLocalClass = { cat: aiCat, ...localClass };
+              base.proposals = this._proposeDocs(aiLocalClass, keyInfo);
+              base.refModel  = MFDocModels.findBestMatch(aiCat) ? { name: MFDocModels.findBestMatch(aiCat).model.name } : null;
+            }
+
+            // Añadir propuestas de la IA si las hay
+            if (Array.isArray(ai.documentos_sugeridos) && ai.documentos_sugeridos.length) {
+              const aiDocs = ai.documentos_sugeridos.map(d => '🤖 '+d);
+              base.proposals = [...new Set([...base.proposals, ...aiDocs])].slice(0,8);
+            }
+          }
+        }
+      } catch (_) { /* silencioso — el análisis local ya es funcional */ }
+
+      return base;
     },
   };
 
-  const CSS_INTEL=`
+  /* ══════════════════════════════════════════════════════
+     CSS
+  ══════════════════════════════════════════════════════ */
+  const CSS_INTEL = `
   .di-wrap{margin-top:12px;border:1px solid var(--border);border-radius:var(--r);overflow:hidden;}
-  .di-trigger{width:100%;padding:10px 14px;background:var(--surface);border:none;color:var(--text-1);font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:8px;text-align:left;border-radius:var(--r);transition:background .15s;}
+  .di-trigger{width:100%;padding:10px 14px;background:var(--surface);border:none;color:var(--text-1);font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:8px;text-align:left;transition:background .15s;}
   .di-trigger:hover{background:var(--hover);}
   .di-trigger.loading{color:var(--text-3);cursor:wait;}
-  .di-panel{padding:14px;background:var(--surface);}
-  .di-hd{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap;}
+  .di-panel{padding:16px;background:var(--surface);border-top:1px solid var(--border);}
+
+  /* Cabecera */
+  .di-hd{display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap;}
   .di-type{font-size:14px;font-weight:700;color:var(--text-1);}
   .di-conf{font-size:12px;font-weight:700;padding:3px 9px;border-radius:20px;}
   .di-conf.hi{background:rgba(16,185,129,.12);color:#059669;}
   .di-conf.mid{background:rgba(245,158,11,.12);color:#d97706;}
   .di-conf.lo{background:rgba(239,68,68,.12);color:#dc2626;}
+  .di-prio{font-size:11.5px;font-weight:700;padding:3px 9px;border-radius:20px;}
+  .di-prio.alta{background:rgba(239,68,68,.1);color:#dc2626;}
+  .di-prio.media{background:rgba(245,158,11,.1);color:#d97706;}
+  .di-prio.baja{background:rgba(107,114,128,.1);color:#6b7280;}
   .di-source{font-size:11px;color:var(--text-3);margin-left:auto;}
-  .di-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;}
-  .di-block{background:var(--hover);border-radius:var(--r-sm);padding:10px 12px;margin-bottom:8px;}
-  .di-block-t{font-size:11px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;}
-  .di-block-v{font-size:12.5px;color:var(--text-1);line-height:1.55;}
-  .di-tag{display:inline-block;background:rgba(37,99,235,.08);color:var(--accent);border:1px solid rgba(37,99,235,.2);border-radius:4px;font-size:11.5px;padding:2px 7px;margin:2px 2px 0 0;}
-  .di-ref{background:rgba(124,58,237,.08);border:1px solid rgba(124,58,237,.2);border-radius:var(--r-sm);padding:8px 12px;font-size:12.5px;color:#6d28d9;margin-bottom:12px;display:flex;align-items:center;gap:6px;}
-  .di-summary{font-size:12.5px;color:var(--text-2);line-height:1.6;font-style:italic;background:rgba(37,99,235,.04);padding:10px 12px;border-radius:var(--r-sm);margin-bottom:12px;}
-  .di-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;}
+
+  /* Secciones del análisis */
+  .di-step{margin-bottom:14px;}
+  .di-step-t{font-size:11px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;display:flex;align-items:center;gap:5px;}
+  .di-step-num{background:var(--accent);color:#fff;border-radius:50%;width:16px;height:16px;font-size:10px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;}
+  .di-card{background:var(--hover);border-radius:var(--r-sm);padding:10px 12px;font-size:12.5px;color:var(--text-1);line-height:1.6;}
+  .di-card.summary{font-style:italic;color:var(--text-2);background:rgba(37,99,235,.04);border-left:3px solid var(--accent);}
+  .di-row{display:flex;gap:6px;margin-bottom:4px;font-size:12.5px;}
+  .di-row-k{color:var(--text-3);min-width:110px;font-weight:600;flex-shrink:0;}
+  .di-row-v{color:var(--text-1);}
+  .di-tag{display:inline-block;background:rgba(37,99,235,.08);color:var(--accent);border:1px solid rgba(37,99,235,.18);border-radius:4px;font-size:11.5px;padding:2px 7px;margin:2px 2px 0 0;}
+  .di-proposal-list{list-style:none;padding:0;margin:0;}
+  .di-proposal-list li{padding:5px 0;border-bottom:1px solid var(--border);font-size:12.5px;color:var(--text-1);cursor:pointer;display:flex;align-items:center;justify-content:space-between;}
+  .di-proposal-list li:last-child{border-bottom:none;}
+  .di-proposal-list li:hover{color:var(--accent);}
+  .di-proposal-gen{font-size:11px;color:var(--accent);font-weight:700;}
+  .di-ref-model{background:rgba(124,58,237,.07);border:1px solid rgba(124,58,237,.2);border-radius:var(--r-sm);padding:8px 12px;font-size:12.5px;color:#6d28d9;display:flex;align-items:center;gap:6px;}
+
+  /* Acciones */
+  .di-sep{border:none;border-top:1px solid var(--border);margin:14px 0;}
+  .di-actions{display:flex;gap:8px;flex-wrap:wrap;}
   .di-btn{padding:7px 13px;border-radius:var(--r-sm);border:1px solid var(--border);font-size:12.5px;font-weight:600;cursor:pointer;background:var(--surface);color:var(--text-1);transition:background .15s;}
   .di-btn:hover{background:var(--hover);}
   .di-btn.primary{background:var(--accent);color:#fff;border-color:var(--accent);}
   .di-btn.primary:hover{filter:brightness(1.1);}
-  .di-sep{border:none;border-top:1px solid var(--border);margin:12px 0;}
-  .di-learn-badge{font-size:11px;background:rgba(16,185,129,.1);color:#059669;border:1px solid rgba(16,185,129,.3);border-radius:20px;padding:2px 8px;display:inline-block;}
-  @media(max-width:640px){.di-grid{grid-template-columns:1fr;}}
+  .di-badge-ok{font-size:11px;background:rgba(16,185,129,.1);color:#059669;border:1px solid rgba(16,185,129,.3);border-radius:20px;padding:2px 8px;display:inline-block;}
+  .di-undetermined{background:rgba(107,114,128,.08);border:1px solid var(--border);border-radius:var(--r-sm);padding:10px 12px;font-size:12.5px;color:var(--text-2);font-style:italic;}
+  @media(max-width:640px){.di-row{flex-direction:column;gap:2px;}.di-row-k{min-width:auto;}}
   `;
 
+  /* ══════════════════════════════════════════════════════
+     UI — MFDocIntelUI
+  ══════════════════════════════════════════════════════ */
   const MFDocIntelUI = {
+
     inject(email, reiWrap) {
-      const wrap=document.createElement('div'); wrap.className='di-wrap';
-      const btn=document.createElement('button'); btn.className='di-trigger';
-      btn.innerHTML='🧠 Vista previa de interpretación IA';
+      const wrap = document.createElement('div');
+      wrap.className = 'di-wrap';
+
+      const btn = document.createElement('button');
+      btn.className = 'di-trigger';
+      btn.innerHTML = '🧠 Vista previa de interpretación IA';
       wrap.appendChild(btn);
-      let panel=null,result=null;
-      btn.addEventListener('click',async()=>{
-        if(panel){panel.remove();panel=null;btn.innerHTML='🧠 Vista previa de interpretación IA';return;}
-        btn.classList.add('loading'); btn.innerHTML='⏳ Interpretando documento…';
-        const text=email.body||email.snippet||email.subject||'';
-        try{
-          result=await MFDocPreview.analyze(text,email.subject||'');
-          panel=this._buildPanel(result,email,text);
+
+      let panel = null;
+
+      btn.addEventListener('click', async () => {
+        if (panel) {
+          panel.remove(); panel = null;
+          btn.innerHTML = '🧠 Vista previa de interpretación IA';
+          return;
+        }
+        btn.classList.add('loading');
+        btn.innerHTML = '⏳ Analizando documento…';
+        try {
+          const result = await MFEmailAnalyst.analyze(email);
+          panel = this._buildPanel(result, email);
           wrap.appendChild(panel);
-          btn.innerHTML='🧠 Ocultar interpretación';
-        }catch(err){
-          btn.innerHTML='🧠 Reintentar interpretación';
-          if(typeof toast==='function')toast('Error de interpretación: '+err.message,true);
-        }finally{btn.classList.remove('loading');}
+          btn.innerHTML = '🧠 Ocultar interpretación';
+        } catch (err) {
+          btn.innerHTML = '🧠 Reintentar';
+          if (typeof toast === 'function') toast('Error: ' + err.message, true);
+        } finally {
+          btn.classList.remove('loading');
+        }
       });
-      reiWrap.insertAdjacentElement('afterend',wrap);
+
+      reiWrap.insertAdjacentElement('afterend', wrap);
     },
-    _buildPanel(r,email,rawText) {
-      const div=document.createElement('div'); div.className='di-panel';
-      const confCls=r.confidence>=70?'hi':r.confidence>=40?'mid':'lo';
-      const srcLabel=r.source==='groq+local'?'🤖 Groq + local':'⚙️ Análisis local';
-      let h=`<div class="di-hd"><span class="di-type">📄 ${escI(r.docType)}</span><span class="di-conf ${confCls}">${r.confidence}% confianza</span><span class="di-source">${srcLabel}</span></div>`;
-      if(r.summary) h+=`<div class="di-summary">${escI(r.summary)}</div>`;
-      if(r.refModel) h+=`<div class="di-ref">📚 Modelo de referencia: <strong>${escI(r.refModel.name)}</strong> · compatibilidad ${r.refModel.score}</div>`;
-      h+=`<div class="di-grid">`;
-      if(r.sections&&r.sections.length){
-        h+=`<div class="di-block"><div class="di-block-t">Secciones detectadas</div><div class="di-block-v">`;
-        r.sections.slice(0,8).forEach(s=>{h+=`<div style="margin-bottom:3px;font-size:12px">${escI(s)}</div>`;});
-        h+=`</div></div>`;
+
+    _buildPanel(r, email) {
+      const div = document.createElement('div');
+      div.className = 'di-panel';
+
+      const confCls  = r.confidence >= 70 ? 'hi' : r.confidence >= 40 ? 'mid' : 'lo';
+      const prioCls  = r.priority === 'alta' ? 'alta' : r.priority === 'baja' ? 'baja' : 'media';
+      const srcLabel = r.source === 'groq+local' ? '🤖 Groq + análisis local' : '⚙️ Análisis local';
+
+      /* ── Cabecera ── */
+      let h = `<div class="di-hd">
+        <span style="font-size:20px">${escI(r.icon||'📄')}</span>
+        <span class="di-type">${r.undetermined ? 'Clasificación no determinada' : escI(r.docType)}</span>
+        <span class="di-conf ${confCls}">${r.confidence}% confianza</span>
+        <span class="di-prio ${prioCls}">Prioridad ${escI(r.priority)}</span>
+        <span class="di-source">${srcLabel}</span>
+      </div>`;
+
+      /* ── PASO 1: Comprensión ── */
+      h += `<div class="di-step">
+        <div class="di-step-t"><span class="di-step-num">1</span> Comprensión del correo</div>
+        <div class="di-card">`;
+      if (r.remitente) h += `<div class="di-row"><span class="di-row-k">👤 Remitente</span><span class="di-row-v">${escI(r.remitente)}</span></div>`;
+      if (r.asunto)    h += `<div class="di-row"><span class="di-row-k">📨 Asunto</span><span class="di-row-v">${escI(r.asunto)}</span></div>`;
+      if (r.fechas && r.fechas.length) h += `<div class="di-row"><span class="di-row-k">📅 Fechas</span><span class="di-row-v">${r.fechas.map(escI).join(', ')}</span></div>`;
+      if (r.adjuntos)  h += `<div class="di-row"><span class="di-row-k">📎 Adjuntos</span><span class="di-row-v">Sí, contiene archivos adjuntos</span></div>`;
+      if (r.urls && r.urls.length) h += `<div class="di-row"><span class="di-row-k">🔗 Enlaces</span><span class="di-row-v">${r.urls.length} enlace(s) detectado(s)</span></div>`;
+      h += `</div></div>`;
+
+      /* ── PASO 2: Interpretación ── */
+      h += `<div class="di-step">
+        <div class="di-step-t"><span class="di-step-num">2</span> Interpretación IA</div>`;
+
+      if (r.undetermined) {
+        h += `<div class="di-undetermined">❓ No se pudo determinar el tipo de documento con suficiente confianza. El análisis es orientativo.</div>`;
+      } else {
+        if (r.resumen) h += `<div class="di-card summary" style="margin-bottom:8px">${escI(r.resumen)}</div>`;
+        h += `<div class="di-card">`;
+        if (r.intencion)         h += `<div class="di-row"><span class="di-row-k">🎯 Intención</span><span class="di-row-v">${escI(r.intencion)}</span></div>`;
+        if (r.accionRecomendada) h += `<div class="di-row"><span class="di-row-k">✅ Acción</span><span class="di-row-v">${escI(r.accionRecomendada)}</span></div>`;
+        h += `</div>`;
       }
-      if(r.expected&&r.expected.length){
-        h+=`<div class="di-block"><div class="di-block-t">Información a extraer</div><div class="di-block-v">`;
-        r.expected.forEach(f=>{h+=`<span class="di-tag">${escI(f.replace(/_/g,' '))}</span>`;});
-        h+=`</div></div>`;
+      h += `</div>`;
+
+      /* ── PASO 3: Propuestas de documentos ── */
+      if (r.proposals && r.proposals.length) {
+        h += `<div class="di-step">
+          <div class="di-step-t"><span class="di-step-num">3</span> Documentos sugeridos</div>
+          <div class="di-card" style="padding:6px 12px">
+            <ul class="di-proposal-list" id="diProposalList">`;
+        r.proposals.forEach((p, i) => {
+          h += `<li data-prop="${escI(p)}"><span>${escI(p)}</span><span class="di-proposal-gen">Generar →</span></li>`;
+        });
+        h += `</ul></div></div>`;
       }
-      h+=`</div>`;
-      if(r.style||r.register){
-        h+=`<div class="di-block"><div class="di-block-t">Estilo de redacción</div><div class="di-block-v">`;
-        if(r.register)h+=`<span class="di-tag">Registro: ${escI(r.register)}</span> `;
-        if(r.style)h+=escI(r.style);
-        h+=`</div></div>`;
+
+      /* ── PASO 4: Modelo de referencia ── */
+      if (r.refModel) {
+        h += `<div class="di-step">
+          <div class="di-step-t"><span class="di-step-num">4</span> Modelo de referencia</div>
+          <div class="di-ref-model">📚 <strong>${escI(r.refModel.name)}</strong> — estructura compatible con este tipo de documento</div>
+        </div>`;
       }
-      if(r.markers&&r.markers.length){
-        h+=`<div class="di-block"><div class="di-block-t">Conectores estructurales</div><div class="di-block-v">`;
-        r.markers.forEach(m=>{h+=`<span class="di-tag">${escI(m)}</span>`;});
-        h+=`</div></div>`;
-      }
-      h+=`<hr class="di-sep"><div style="font-size:12px;color:var(--text-3);margin-bottom:8px">✅ Interpretación completa. Procede a la extracción o guarda este documento como modelo estructural.</div>
-      <div class="di-actions"><button class="di-btn primary" id="diRunExtract">▶ Ejecutar extracción</button><button class="di-btn" id="diSaveModel">💾 Guardar como modelo documental</button></div>`;
-      div.innerHTML=h;
-      div.querySelector('#diRunExtract').addEventListener('click',()=>{
-        const reiBtn=document.querySelector('.rei-trigger');
-        if(reiBtn&&!reiBtn.innerHTML.includes('Ocultar'))reiBtn.click();
-        else if(typeof toast==='function')toast('Usa "Análisis inmobiliario con IA" o el Extractor para continuar.');
+
+      /* ── PASO 5: Extracción ── */
+      h += `<div class="di-step">
+        <div class="di-step-t"><span class="di-step-num">5</span> Extracción estructurada</div>
+        <div class="di-card" style="color:var(--text-3);font-size:12px">
+          La extracción es el último paso del proceso. Ejecuta el análisis una vez revisada la interpretación anterior.
+        </div>
+      </div>`;
+
+      h += `<hr class="di-sep">
+      <div class="di-actions">
+        <button class="di-btn primary" id="diRunExtract">▶ Ejecutar extracción</button>
+        <button class="di-btn" id="diSaveModel">💾 Guardar como modelo documental</button>
+      </div>`;
+
+      div.innerHTML = h;
+
+      /* Clic en propuesta → toast informativo */
+      div.querySelector('#diProposalList')?.addEventListener('click', e => {
+        const li = e.target.closest('li[data-prop]');
+        if (!li) return;
+        if (typeof toast === 'function') toast('📝 Generación de "' + li.dataset.prop + '" — próximamente en MovFlow.');
       });
-      div.querySelector('#diSaveModel').addEventListener('click',()=>{
-        const name=prompt('Nombre del modelo documental:',r.docType);
-        if(!name)return;
-        const model=MFDocModels.ingest(rawText,{name,category:r.category,language:'es',register:r.register||'jurídico',description:r.summary||''});
-        const saveBtn=div.querySelector('#diSaveModel');
-        saveBtn.innerHTML='✅ Guardado'; saveBtn.disabled=true;
-        const badge=document.createElement('span'); badge.className='di-learn-badge';
-        badge.textContent='✓ Añadido: '+model.name;
+
+      /* Ejecutar extracción → lanza el análisis REI */
+      div.querySelector('#diRunExtract').addEventListener('click', () => {
+        const reiBtn = document.querySelector('.rei-trigger');
+        if (reiBtn) {
+          if (!reiBtn.innerHTML.includes('Ocultar')) reiBtn.click();
+          reiBtn.scrollIntoView({ behavior:'smooth', block:'nearest' });
+        } else if (typeof toast === 'function') {
+          toast('Usa el botón "Análisis inmobiliario con IA" o el panel Extractor.');
+        }
+      });
+
+      /* Guardar como modelo documental */
+      div.querySelector('#diSaveModel').addEventListener('click', () => {
+        const rawText = email.body || email.snippet || '';
+        const name    = prompt('Nombre del modelo documental:', r.docType);
+        if (!name) return;
+        const model = MFDocModels.ingest(rawText, {
+          name,
+          category:    r.category,
+          language:    'es',
+          register:    'general',
+          description: r.resumen || '',
+        });
+        const saveBtn = div.querySelector('#diSaveModel');
+        saveBtn.innerHTML = '✅ Guardado'; saveBtn.disabled = true;
+        const badge = document.createElement('span');
+        badge.className = 'di-badge-ok';
+        badge.textContent = '✓ Añadido: ' + model.name;
         div.querySelector('.di-actions').appendChild(badge);
-        if(typeof toast==='function')toast('Modelo "'+model.name+'" guardado en la biblioteca.');
+        if (typeof toast === 'function') toast('Modelo "' + model.name + '" guardado en la biblioteca.');
       });
+
       return div;
     },
   };
 
-  /* Modelo inicial — Contrato de Arrendamiento Temporal (del ejemplo) */
-  (function seedInitialModel(){
-    const arr=MFDocModels._load();
-    if(arr.find(m=>m.id==='mdl_seed_arrendamiento'))return;
-    arr.push({
-      id:'mdl_seed_arrendamiento',
-      name:'Contrato de Arrendamiento Temporal de Vivienda',
-      category:'arrendamiento',
-      description:'Contrato LAU temporal entre arrendador y arrendatarios, con fianza, prohibiciones y avalistas solidarios. Estructura jurídica española.',
-      addedAt:new Date().toISOString(),
-      structure:{sectionCount:16,sections:[],styleMarkers:['exponen','acuerdan','reunidos','en su virtud','de una parte','y de otra'],avgLineLength:72,totalLines:180},
-      styleSignature:{markers:['exponen','acuerdan','reunidos','en su virtud','de una parte','y de otra'],avgLineLen:72,sectionCount:16,language:'es',register:'jurídico'},
-      styleExcerpt:`CONTRATO DE ARRENDAMIENTO TEMPORAL DE VIVIENDA\n\nREUNIDOS\n\nDe una parte, en concepto de PARTE ARRENDADORA:\n[NOMBRE], con D.N.I [ID], mayor de edad, con domicilio en [DIRECCIÓN].\n\nY de otra parte, en concepto de PARTE ARRENDATARIA:\n[NOMBRE] con DNI [ID], mayor de edad, con domicilio en [DIRECCIÓN].\n\nEXPONEN:\n\nI.- Que [NOMBRE] es propietario en pleno dominio de la vivienda sita en [DIRECCIÓN].\n\nACUERDAN\n\nPRIMERO. - OBJETO. Arrendamiento de vivienda temporal.\nSEGUNDO. - DURACIÓN. Desde [FECHA] hasta [FECHA].\nTERCERO. - RENTA. [IMPORTE] mensuales. IBI y comunidad a cargo del arrendador.\nCUARTO. - PAGO. Transferencia a [IBAN].\nQUINTO. - CONDICIONES. Buen estado de conservación.\nSEXTO. - PROHIBICIONES. Obras, animales, subarriendo.\nSÉPTIMO. - SERVICIOS. A cargo del arrendatario.\nNOVENO. - FIANZA. [IMPORTE].\nUNDÉCIMO. - AVALISTAS SOLIDARIOS.\nDÉCIMOSEXTO. - JURISDICCIÓN: Juzgados de [CIUDAD].`,
-      sectionLabels:['OBJETO','DURACIÓN','RENTA','PAGO DE LA RENTA','CONDICIONES DE LA VIVIENDA','PROHIBICIONES','SERVICIOS','FIANZA','AVALISTAS SOLIDARIOS','DIVERGENCIAS Y LITIGIOS'],
-    });
-    MFDocModels._save(arr);
-  })();
+  /* ── CSS ── */
+  (function(){ const st=document.createElement('style'); st.textContent=CSS_INTEL; document.head.appendChild(st); })();
 
-  /* CSS */
-  (function(){const st=document.createElement('style');st.textContent=CSS_INTEL;document.head.appendChild(st);})();
+  /* ── Exponer namespace ── */
+  window.MFDocModels    = MFDocModels;
+  window.MFEmailAnalyst = MFEmailAnalyst;
+  window.MFDocIntelUI   = MFDocIntelUI;
+  window.Anonymizer     = Anonymizer;
 
-  window.MFDocModels=MFDocModels;
-  window.MFDocPreview=MFDocPreview;
-  window.MFDocIntelUI=MFDocIntelUI;
-  window.Anonymizer=Anonymizer;
 })();
 </script>
+
 
 <!-- ═══ MovFlow Pipeline v2 · Gestor de Plantillas ═══ -->
 <script>
