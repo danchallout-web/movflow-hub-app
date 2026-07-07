@@ -792,6 +792,7 @@
     <div class="nav-tab active" data-panel="emails">Emails</div>
     <div class="nav-tab" data-panel="folders">Carpetas</div>
     <div class="nav-tab" data-panel="extractor">Extractor</div>
+    <div class="nav-tab" data-panel="pdfeditor">Editor PDF</div>
   </div>
   <div class="nav-sep"></div>
   <div class="nav-live"><div class="live-dot"></div><span id="liveLbl">Conectado</span></div>
@@ -925,6 +926,8 @@
         </div>
       </div>
     </div>
+
+  <div class="panel" id="panel-pdfeditor"></div>
 
   </main>
 </div>
@@ -4867,6 +4870,735 @@ No incluyas explicaciones, solo el documento.`;
   window.MFAnalyzer   = MFAnalyzer;
   window.MFGenerator  = MFGenerator;
   window.MFAssistant  = MFAssistant;
+
+})();
+</script>
+
+
+<!-- ═══ MovFlow · Editor PDF ═══ -->
+<script>
+/* ═══════════════════════════════════════════════════════════════════════
+   MovFlow · PDF Editor — Módulo independiente
+   ───────────────────────────────────────────────────────────────────────
+   Librerías open source (cargadas desde CDN):
+     PDF.js   (Mozilla, Apache 2.0) — renderizado de páginas PDF
+     pdf-lib  (MIT)                 — manipulación: merge, split, rotate
+   Capacidades:
+     • Abrir PDF por arrastrar/soltar o selector de archivo
+     • Navegar páginas con miniatura lateral
+     • Zoom libre
+     • Anotaciones: texto libre, resaltado, firma manuscrita (canvas)
+     • Herramientas: rotar, reordenar, eliminar, duplicar páginas
+     • Merge: unir dos PDFs
+     • Split: extraer rango de páginas
+     • Exportar PDF modificado
+   ═══════════════════════════════════════════════════════════════════════ */
+(function () {
+  'use strict';
+  if (window.__MF_PDF_EDITOR__) return;
+  window.__MF_PDF_EDITOR__ = true;
+
+  /* ── CDN URLs ── */
+  const PDFJS_URL  = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs';
+  const PDFJS_WORKER = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs';
+  const PDFLIB_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js';
+
+  /* ── State ── */
+  const S = {
+    pdfjsLib:    null,
+    PDFLib:      null,
+    pdfDoc:      null,       // pdf.js document
+    pdfLibDoc:   null,       // pdf-lib document for export
+    pdfBytes:    null,       // original Uint8Array
+    totalPages:  0,
+    currentPage: 1,
+    zoom:        1.2,
+    pageOrder:   [],         // [0-indexed] allows reorder/delete
+    annotations: {},         // pageNum → [{type,x,y,text,color,w,h}]
+    tool:        'select',   // select | text | highlight | sign | erase
+    signCanvas:  null,
+    signCtx:     null,
+    signDrawing: false,
+    fileName:    'documento.pdf',
+    mergeBytes:  null,       // second PDF for merge
+  };
+
+  /* ── CSS ── */
+  const CSS = `
+  #panel-pdfeditor { padding:0; display:flex; flex-direction:column; height:calc(100vh - 56px); overflow:hidden; }
+
+  /* Drop zone */
+  .pe-dropzone { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:16px; color:var(--text-3); font-size:14px; border:2px dashed var(--border);
+    border-radius:var(--r); margin:20px; cursor:pointer; transition:all .2s; }
+  .pe-dropzone:hover,.pe-dropzone.over { border-color:var(--accent); color:var(--accent); background:rgba(37,99,235,.04); }
+  .pe-dropzone-ico { font-size:48px; }
+  .pe-dropzone-t { font-weight:700; font-size:16px; }
+  .pe-dropzone-sub { font-size:13px; }
+  .pe-file-btn { padding:10px 22px; background:var(--accent); color:#fff; border:none;
+    border-radius:var(--r-sm); font-size:13px; font-weight:700; cursor:pointer; }
+
+  /* Editor layout */
+  .pe-layout { display:flex; flex:1; overflow:hidden; }
+
+  /* Toolbar */
+  .pe-toolbar { background:var(--surface); border-bottom:1px solid var(--border);
+    padding:8px 12px; display:flex; align-items:center; gap:6px; flex-wrap:wrap; flex-shrink:0; }
+  .pe-tb-group { display:flex; gap:4px; align-items:center; }
+  .pe-tb-sep { width:1px; height:24px; background:var(--border); margin:0 4px; }
+  .pe-tb-btn { padding:5px 10px; border:1px solid var(--border); border-radius:var(--r-sm);
+    font-size:12px; cursor:pointer; background:var(--surface); color:var(--text-1);
+    transition:background .12s; white-space:nowrap; font-family:inherit; }
+  .pe-tb-btn:hover { background:var(--hover); }
+  .pe-tb-btn.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .pe-tb-btn.danger { color:#dc2626; border-color:#fca5a5; }
+  .pe-tb-btn.danger:hover { background:#fef2f2; }
+  .pe-tb-btn.success { background:#059669; color:#fff; border-color:#059669; }
+  .pe-zoom-val { font-size:12px; color:var(--text-2); min-width:38px; text-align:center; }
+  .pe-page-info { font-size:12px; color:var(--text-2); white-space:nowrap; }
+  .pe-file-name { font-size:12px; color:var(--text-3); max-width:180px;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+  /* Thumbnails sidebar */
+  .pe-thumbs { width:110px; min-width:110px; background:var(--hover); border-right:1px solid var(--border);
+    overflow-y:auto; padding:8px 6px; display:flex; flex-direction:column; gap:6px; flex-shrink:0; }
+  .pe-thumb { border:2px solid transparent; border-radius:4px; cursor:pointer;
+    overflow:hidden; position:relative; background:#fff; }
+  .pe-thumb.active { border-color:var(--accent); }
+  .pe-thumb canvas { width:100% !important; height:auto !important; display:block; }
+  .pe-thumb-num { font-size:10px; color:var(--text-3); text-align:center;
+    padding:2px 0; background:var(--hover); }
+  .pe-thumb-del { position:absolute; top:3px; right:3px; background:rgba(220,38,38,.85);
+    color:#fff; border:none; border-radius:3px; font-size:11px; cursor:pointer;
+    padding:1px 5px; display:none; line-height:1.4; }
+  .pe-thumb:hover .pe-thumb-del { display:block; }
+
+  /* Canvas area */
+  .pe-canvas-wrap { flex:1; overflow:auto; display:flex; flex-direction:column;
+    align-items:center; padding:20px; gap:16px; background:var(--hover); position:relative; }
+  .pe-page-wrap { position:relative; box-shadow:0 4px 20px rgba(0,0,0,.18);
+    background:#fff; border-radius:2px; flex-shrink:0; }
+  .pe-page-wrap canvas { display:block; }
+  .pe-annot-layer { position:absolute; inset:0; pointer-events:none; }
+  .pe-annot-layer.active { pointer-events:all; cursor:crosshair; }
+  .pe-annot-layer.select { cursor:default; }
+  .pe-annot-layer.text { cursor:text; }
+
+  /* Annotation elements */
+  .pe-annot { position:absolute; }
+  .pe-annot-text { background:rgba(255,255,180,.85); border:1px solid #d4a017;
+    border-radius:3px; padding:3px 6px; font-size:12px; cursor:move;
+    min-width:60px; min-height:20px; outline:none; }
+  .pe-annot-highlight { border-radius:2px; opacity:.4; pointer-events:none; }
+  .pe-sign-annot { position:absolute; pointer-events:none; }
+
+  /* Signature modal */
+  .pe-sign-modal { position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:9999;
+    display:flex; align-items:center; justify-content:center; }
+  .pe-sign-box { background:var(--surface); border-radius:var(--r); padding:20px;
+    width:min(420px,92vw); box-shadow:0 8px 32px rgba(0,0,0,.2); }
+  .pe-sign-box h3 { font-size:15px; font-weight:700; margin-bottom:12px; color:var(--text-1); }
+  .pe-sign-canvas { border:2px solid var(--border); border-radius:var(--r-sm);
+    width:100%; cursor:crosshair; touch-action:none; background:#fff; display:block; }
+  .pe-sign-actions { display:flex; gap:8px; margin-top:12px; justify-content:flex-end; }
+
+  /* Merge/Split modals */
+  .pe-modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:9998;
+    display:flex; align-items:center; justify-content:center; }
+  .pe-modal { background:var(--surface); border-radius:var(--r); padding:22px;
+    width:min(400px,92vw); box-shadow:0 8px 32px rgba(0,0,0,.18); }
+  .pe-modal h3 { font-size:14px; font-weight:700; margin-bottom:14px; color:var(--text-1); }
+  .pe-modal label { font-size:12px; color:var(--text-2); font-weight:600; display:block; margin-bottom:4px; }
+  .pe-modal input { width:100%; padding:7px 10px; border:1px solid var(--border);
+    border-radius:var(--r-sm); font-size:13px; background:var(--surface);
+    color:var(--text-1); box-sizing:border-box; margin-bottom:12px; }
+  .pe-modal input:focus { outline:none; border-color:var(--accent); }
+  .pe-modal-foot { display:flex; gap:8px; justify-content:flex-end; margin-top:6px; }
+
+  @media(max-width:600px) {
+    .pe-thumbs { width:70px; min-width:70px; }
+    .pe-tb-btn { padding:5px 7px; font-size:11px; }
+    .pe-canvas-wrap { padding:10px; }
+  }`;
+
+  /* ── Helpers ── */
+  const el  = (tag, cls, html='') => { const e=document.createElement(tag); if(cls)e.className=cls; if(html)e.innerHTML=html; return e; };
+  const $id = id => document.getElementById(id);
+
+  /* ══════════════════════════════════════════════════════
+     MOUNT — builds panel HTML and wires events
+  ══════════════════════════════════════════════════════ */
+  function mount() {
+    const panel = $id('panel-pdfeditor');
+    if (!panel || panel.dataset.mounted) return;
+    panel.dataset.mounted = '1';
+
+    /* Inject CSS */
+    const st = document.createElement('style');
+    st.textContent = CSS;
+    document.head.appendChild(st);
+
+    /* Drop zone (initial state) */
+    panel.innerHTML = `
+      <div class="pe-dropzone" id="peDropZone">
+        <div class="pe-dropzone-ico">📄</div>
+        <div class="pe-dropzone-t">Arrastra un PDF aquí</div>
+        <div class="pe-dropzone-sub">o selecciona un archivo</div>
+        <button class="pe-file-btn" id="pePickFile">Abrir PDF</button>
+        <input type="file" id="peFileInput" accept=".pdf" style="display:none">
+      </div>`;
+
+    wireDropZone();
+  }
+
+  /* ── Drop zone wiring ── */
+  function wireDropZone() {
+    const dz  = $id('peDropZone');
+    const inp = $id('peFileInput');
+    if (!dz) return;
+
+    dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('over'); });
+    dz.addEventListener('dragleave', () => dz.classList.remove('over'));
+    dz.addEventListener('drop', e => { e.preventDefault(); dz.classList.remove('over'); if(e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]); });
+    $id('pePickFile').addEventListener('click', () => inp.click());
+    inp.addEventListener('change', e => { if(e.target.files[0]) loadFile(e.target.files[0]); });
+  }
+
+  /* ══════════════════════════════════════════════════════
+     LOAD LIBRARIES  (lazy, only when needed)
+  ══════════════════════════════════════════════════════ */
+  async function loadLibs() {
+    if (S.pdfjsLib && S.PDFLib) return;
+
+    /* pdf-lib (UMD, sets window.PDFLib) */
+    if (!window.PDFLib) {
+      await new Promise((res,rej)=>{
+        const s=document.createElement('script'); s.src=PDFLIB_URL;
+        s.onload=res; s.onerror=rej; document.head.appendChild(s);
+      });
+    }
+    S.PDFLib = window.PDFLib;
+
+    /* pdf.js (ESM) */
+    if (!S.pdfjsLib) {
+      const mod = await import(PDFJS_URL);
+      S.pdfjsLib = mod;
+      S.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER;
+    }
+  }
+
+  /* ══════════════════════════════════════════════════════
+     LOAD FILE
+  ══════════════════════════════════════════════════════ */
+  async function loadFile(file) {
+    if (!file || file.type !== 'application/pdf') {
+      alert('Por favor selecciona un archivo PDF válido.'); return;
+    }
+    const panel = $id('panel-pdfeditor');
+    panel.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-3)">⏳ Cargando librerías y PDF…</div>';
+
+    try {
+      await loadLibs();
+      S.fileName    = file.name;
+      S.pdfBytes    = new Uint8Array(await file.arrayBuffer());
+      S.pdfDoc      = await S.pdfjsLib.getDocument({ data: S.pdfBytes.slice() }).promise;
+      S.pdfLibDoc   = await S.PDFLib.PDFDocument.load(S.pdfBytes.slice());
+      S.totalPages  = S.pdfDoc.numPages;
+      S.currentPage = 1;
+      S.pageOrder   = Array.from({length:S.totalPages},(_,i)=>i);
+      S.annotations = {};
+      S.zoom        = 1.2;
+      buildEditorUI();
+    } catch(err) {
+      panel.innerHTML = `<div style="padding:40px;text-align:center;color:#dc2626">Error cargando PDF: ${err.message}<br><br><button class="pe-file-btn" onclick="location.reload()">Reintentar</button></div>`;
+    }
+  }
+
+  /* ══════════════════════════════════════════════════════
+     BUILD EDITOR UI
+  ══════════════════════════════════════════════════════ */
+  function buildEditorUI() {
+    const panel = $id('panel-pdfeditor');
+    panel.innerHTML = `
+      <!-- Toolbar -->
+      <div class="pe-toolbar" id="peToolbar">
+        <div class="pe-tb-group">
+          <button class="pe-tb-btn" id="peBtnOpen" title="Abrir otro PDF">📂 Abrir</button>
+          <input type="file" id="peFileInput2" accept=".pdf" style="display:none">
+          <span class="pe-file-name" id="peFileName">${S.fileName}</span>
+        </div>
+        <div class="pe-tb-sep"></div>
+        <!-- Navegación -->
+        <div class="pe-tb-group">
+          <button class="pe-tb-btn" id="pePrev">◀</button>
+          <span class="pe-page-info" id="pePageInfo">1 / ${S.totalPages}</span>
+          <button class="pe-tb-btn" id="peNext">▶</button>
+        </div>
+        <div class="pe-tb-sep"></div>
+        <!-- Zoom -->
+        <div class="pe-tb-group">
+          <button class="pe-tb-btn" id="peZoomOut">−</button>
+          <span class="pe-zoom-val" id="peZoomVal">120%</span>
+          <button class="pe-tb-btn" id="peZoomIn">+</button>
+          <button class="pe-tb-btn" id="peZoomFit">Ajustar</button>
+        </div>
+        <div class="pe-tb-sep"></div>
+        <!-- Herramientas de anotación -->
+        <div class="pe-tb-group">
+          <button class="pe-tb-btn active" id="peTool-select" data-tool="select">🖱 Seleccionar</button>
+          <button class="pe-tb-btn" id="peTool-text" data-tool="text">T Texto</button>
+          <button class="pe-tb-btn" id="peTool-highlight" data-tool="highlight">🖊 Resaltar</button>
+          <button class="pe-tb-btn" id="peTool-sign" data-tool="sign">✍️ Firma</button>
+        </div>
+        <div class="pe-tb-sep"></div>
+        <!-- Página -->
+        <div class="pe-tb-group">
+          <button class="pe-tb-btn" id="peRotateL" title="Rotar izquierda">↺</button>
+          <button class="pe-tb-btn" id="peRotateR" title="Rotar derecha">↻</button>
+          <button class="pe-tb-btn" id="peDupPage" title="Duplicar página">⧉</button>
+          <button class="pe-tb-btn danger" id="peDelPage" title="Eliminar página">🗑 Página</button>
+        </div>
+        <div class="pe-tb-sep"></div>
+        <!-- Documento -->
+        <div class="pe-tb-group">
+          <button class="pe-tb-btn" id="peMerge">📎 Unir PDF</button>
+          <button class="pe-tb-btn" id="peSplit">✂️ Dividir</button>
+        </div>
+        <div class="pe-tb-sep"></div>
+        <div class="pe-tb-group">
+          <button class="pe-tb-btn success" id="peExport">⬇ Exportar PDF</button>
+        </div>
+      </div>
+
+      <!-- Main layout -->
+      <div class="pe-layout">
+        <div class="pe-thumbs" id="peThumbs"></div>
+        <div class="pe-canvas-wrap" id="peCanvasWrap">
+          <div class="pe-page-wrap" id="pePageWrap">
+            <canvas id="peMainCanvas"></canvas>
+            <div class="pe-annot-layer select" id="peAnnotLayer"></div>
+          </div>
+        </div>
+      </div>`;
+
+    wireToolbar();
+    renderThumbs();
+    renderPage(S.currentPage);
+  }
+
+  /* ══════════════════════════════════════════════════════
+     RENDER PAGE
+  ══════════════════════════════════════════════════════ */
+  async function renderPage(num) {
+    S.currentPage = num;
+    const realIdx = S.pageOrder[num-1]; // 0-indexed
+    const page    = await S.pdfDoc.getPage(realIdx+1);
+    const vp      = page.getViewport({ scale: S.zoom });
+    const canvas  = $id('peMainCanvas');
+    const ctx     = canvas.getContext('2d');
+    canvas.width  = vp.width;
+    canvas.height = vp.height;
+    await page.render({ canvasContext:ctx, viewport:vp }).promise;
+
+    /* Update UI */
+    $id('pePageInfo').textContent = `${num} / ${S.pageOrder.length}`;
+    $id('peZoomVal').textContent  = Math.round(S.zoom*100)+'%';
+
+    /* Update annotation layer size */
+    const al = $id('peAnnotLayer');
+    al.style.width  = vp.width+'px';
+    al.style.height = vp.height+'px';
+
+    /* Re-render saved annotations */
+    renderAnnotations(num);
+
+    /* Update thumb highlight */
+    document.querySelectorAll('.pe-thumb').forEach((t,i)=>t.classList.toggle('active',i===num-1));
+  }
+
+  /* ══════════════════════════════════════════════════════
+     THUMBNAILS
+  ══════════════════════════════════════════════════════ */
+  async function renderThumbs() {
+    const container = $id('peThumbs');
+    if (!container) return;
+    container.innerHTML='';
+    for (let i=0; i<S.pageOrder.length; i++) {
+      const realIdx = S.pageOrder[i];
+      const page    = await S.pdfDoc.getPage(realIdx+1);
+      const vp      = page.getViewport({ scale:0.18 });
+      const c       = document.createElement('canvas');
+      c.width=vp.width; c.height=vp.height;
+      await page.render({ canvasContext:c.getContext('2d'), viewport:vp }).promise;
+
+      const wrap = el('div','pe-thumb'+(i===S.currentPage-1?' active':''));
+      const delBtn = el('button','pe-thumb-del','✕');
+      const num    = el('div','pe-thumb-num',String(i+1));
+      wrap.appendChild(c); wrap.appendChild(delBtn); wrap.appendChild(num);
+      wrap.addEventListener('click', e=>{ if(e.target!==delBtn) renderPage(i+1); });
+      delBtn.addEventListener('click', e=>{ e.stopPropagation(); deletePage(i); });
+      container.appendChild(wrap);
+    }
+  }
+
+  /* ══════════════════════════════════════════════════════
+     ANNOTATIONS
+  ══════════════════════════════════════════════════════ */
+  function renderAnnotations(pageNum) {
+    const layer = $id('peAnnotLayer'); if (!layer) return;
+    /* Keep only SVG sign annotations, rebuild text/highlight */
+    layer.querySelectorAll('.pe-annot-text,.pe-annot-highlight').forEach(n=>n.remove());
+    const annots = S.annotations[pageNum] || [];
+    annots.forEach(a => {
+      if (a.type==='text') {
+        const d = el('div','pe-annot pe-annot-text');
+        d.contentEditable='true'; d.textContent=a.text||'Texto';
+        d.style.left=a.x+'px'; d.style.top=a.y+'px';
+        d.addEventListener('blur',()=>a.text=d.textContent);
+        makeDraggable(d);
+        layer.appendChild(d);
+      } else if (a.type==='highlight') {
+        const d = el('div','pe-annot pe-annot-highlight');
+        d.style.cssText=`left:${a.x}px;top:${a.y}px;width:${a.w}px;height:${a.h||20}px;background:${a.color||'#ffef00'}`;
+        layer.appendChild(d);
+      }
+    });
+  }
+
+  function makeDraggable(el) {
+    let ox,oy,sx,sy;
+    el.addEventListener('mousedown', e=>{
+      if (e.target.isContentEditable && document.activeElement===el) return;
+      e.preventDefault();
+      sx=e.clientX; sy=e.clientY;
+      ox=parseInt(el.style.left||0); oy=parseInt(el.style.top||0);
+      const move=mv=>{ el.style.left=(ox+mv.clientX-sx)+'px'; el.style.top=(oy+mv.clientY-sy)+'px'; };
+      const up=()=>{ document.removeEventListener('mousemove',move); document.removeEventListener('mouseup',up); };
+      document.addEventListener('mousemove',move);
+      document.addEventListener('mouseup',up);
+    });
+  }
+
+  /* ── Annotation layer click handler ── */
+  function setupAnnotLayer(layer) {
+    let hlStart=null, hlRect=null;
+
+    layer.addEventListener('click', e=>{
+      if (S.tool==='text') {
+        const r=layer.getBoundingClientRect();
+        const a={type:'text',x:e.clientX-r.left,y:e.clientY-r.top,text:'Texto'};
+        if (!S.annotations[S.currentPage]) S.annotations[S.currentPage]=[];
+        S.annotations[S.currentPage].push(a);
+        renderAnnotations(S.currentPage);
+      } else if (S.tool==='sign') {
+        openSignModal(e);
+      }
+    });
+
+    /* Highlight drag */
+    layer.addEventListener('mousedown', e=>{
+      if (S.tool!=='highlight') return;
+      const r=layer.getBoundingClientRect();
+      hlStart={x:e.clientX-r.left,y:e.clientY-r.top};
+      hlRect=el('div','pe-annot pe-annot-highlight');
+      hlRect.style.cssText=`left:${hlStart.x}px;top:${hlStart.y}px;width:0;height:0;background:rgba(255,239,0,.5);pointer-events:none`;
+      layer.appendChild(hlRect);
+    });
+    layer.addEventListener('mousemove', e=>{
+      if (S.tool!=='highlight'||!hlStart||!hlRect) return;
+      const r=layer.getBoundingClientRect();
+      const cx=e.clientX-r.left, cy=e.clientY-r.top;
+      hlRect.style.width=Math.abs(cx-hlStart.x)+'px';
+      hlRect.style.height=Math.abs(cy-hlStart.y)+'px';
+      hlRect.style.left=Math.min(cx,hlStart.x)+'px';
+      hlRect.style.top=Math.min(cy,hlStart.y)+'px';
+    });
+    layer.addEventListener('mouseup', e=>{
+      if (S.tool!=='highlight'||!hlStart||!hlRect) return;
+      const r=layer.getBoundingClientRect();
+      const cx=e.clientX-r.left, cy=e.clientY-r.top;
+      const w=Math.abs(cx-hlStart.x), h=Math.abs(cy-hlStart.y);
+      if (w>5&&h>5) {
+        const a={type:'highlight',x:Math.min(cx,hlStart.x),y:Math.min(cy,hlStart.y),w,h,color:'rgba(255,239,0,.45)'};
+        if (!S.annotations[S.currentPage]) S.annotations[S.currentPage]=[];
+        S.annotations[S.currentPage].push(a);
+      }
+      hlRect.remove(); hlRect=null; hlStart=null;
+    });
+  }
+
+  /* ══════════════════════════════════════════════════════
+     SIGNATURE MODAL
+  ══════════════════════════════════════════════════════ */
+  function openSignModal(clickEvt) {
+    const modal = el('div','pe-sign-modal');
+    modal.innerHTML=`<div class="pe-sign-box">
+      <h3>✍️ Dibujar firma</h3>
+      <canvas class="pe-sign-canvas" id="peSignCanvas" width="360" height="140"></canvas>
+      <div class="pe-sign-actions">
+        <button class="pe-tb-btn" id="peSignClear">Borrar</button>
+        <button class="pe-tb-btn" id="peSignCancel">Cancelar</button>
+        <button class="pe-tb-btn active" id="peSignOk">Insertar firma</button>
+      </div>
+    </div>`;
+    document.body.appendChild(modal);
+
+    const canvas = modal.querySelector('#peSignCanvas');
+    const ctx    = canvas.getContext('2d');
+    ctx.strokeStyle='#1a1a2e'; ctx.lineWidth=2.5; ctx.lineCap='round'; ctx.lineJoin='round';
+    let drawing=false, last={x:0,y:0};
+
+    const getPos = e => {
+      const r=canvas.getBoundingClientRect();
+      const scaleX=canvas.width/r.width, scaleY=canvas.height/r.height;
+      const src=e.touches?e.touches[0]:e;
+      return {x:(src.clientX-r.left)*scaleX,y:(src.clientY-r.top)*scaleY};
+    };
+    canvas.addEventListener('mousedown', e=>{drawing=true;last=getPos(e);});
+    canvas.addEventListener('touchstart',e=>{e.preventDefault();drawing=true;last=getPos(e);},{passive:false});
+    canvas.addEventListener('mousemove', e=>{if(!drawing)return;const p=getPos(e);ctx.beginPath();ctx.moveTo(last.x,last.y);ctx.lineTo(p.x,p.y);ctx.stroke();last=p;});
+    canvas.addEventListener('touchmove', e=>{e.preventDefault();if(!drawing)return;const p=getPos(e);ctx.beginPath();ctx.moveTo(last.x,last.y);ctx.lineTo(p.x,p.y);ctx.stroke();last=p;},{passive:false});
+    const stopDraw=()=>drawing=false;
+    canvas.addEventListener('mouseup',stopDraw); canvas.addEventListener('touchend',stopDraw);
+
+    modal.querySelector('#peSignClear').onclick=()=>ctx.clearRect(0,0,canvas.width,canvas.height);
+    modal.querySelector('#peSignCancel').onclick=()=>modal.remove();
+    modal.querySelector('#peSignOk').onclick=()=>{
+      const dataUrl=canvas.toDataURL('image/png');
+      const layer=$id('peAnnotLayer');
+      const mainR=$id('peMainCanvas').getBoundingClientRect();
+      const layR=layer.getBoundingClientRect();
+      let cx=layR.width/2-90, cy=layR.height*0.7;
+      if (clickEvt) { const lr=layer.getBoundingClientRect(); cx=clickEvt.clientX-lr.left-90; cy=clickEvt.clientY-lr.top-30; }
+      const img=document.createElement('img');
+      img.src=dataUrl; img.className='pe-sign-annot';
+      img.style.cssText=`left:${cx}px;top:${cy}px;width:180px;opacity:.9;`;
+      makeDraggable(img);
+      layer.appendChild(img);
+      if (!S.annotations[S.currentPage]) S.annotations[S.currentPage]=[];
+      S.annotations[S.currentPage].push({type:'sign',x:cx,y:cy,dataUrl,w:180});
+      modal.remove();
+    };
+  }
+
+  /* ══════════════════════════════════════════════════════
+     PAGE OPERATIONS
+  ══════════════════════════════════════════════════════ */
+  function deletePage(idx) {
+    if (S.pageOrder.length<=1) { alert('El PDF debe tener al menos una página.'); return; }
+    if (!confirm(`¿Eliminar la página ${idx+1}?`)) return;
+    S.pageOrder.splice(idx,1);
+    delete S.annotations[idx+1];
+    if (S.currentPage>S.pageOrder.length) S.currentPage=S.pageOrder.length;
+    renderThumbs();
+    renderPage(S.currentPage);
+  }
+
+  function duplicatePage() {
+    const idx=S.currentPage-1;
+    S.pageOrder.splice(idx+1,0,S.pageOrder[idx]);
+    renderThumbs();
+    renderPage(S.currentPage+1);
+  }
+
+  async function rotatePage(deg) {
+    const realIdx=S.pageOrder[S.currentPage-1]+1;
+    const pages=S.pdfLibDoc.getPages();
+    const page=pages[realIdx-1];
+    const cur=page.getRotation().angle;
+    page.setRotation(S.PDFLib.degrees((cur+deg+360)%360));
+    /* Reload pdfDoc for rendering */
+    const bytes=await S.pdfLibDoc.save();
+    S.pdfBytes=new Uint8Array(bytes);
+    S.pdfDoc=await S.pdfjsLib.getDocument({data:S.pdfBytes.slice()}).promise;
+    renderThumbs();
+    renderPage(S.currentPage);
+  }
+
+  /* ══════════════════════════════════════════════════════
+     MERGE
+  ══════════════════════════════════════════════════════ */
+  function openMergeModal() {
+    const modal=el('div','pe-modal-overlay');
+    modal.innerHTML=`<div class="pe-modal">
+      <h3>📎 Unir PDFs</h3>
+      <label>Selecciona el segundo PDF a añadir al final</label>
+      <input type="file" id="peMergeFile" accept=".pdf">
+      <div class="pe-modal-foot">
+        <button class="pe-tb-btn" id="peMergeCancel">Cancelar</button>
+        <button class="pe-tb-btn active" id="peMergeOk">Unir y descargar</button>
+      </div>
+    </div>`;
+    document.body.appendChild(modal);
+    modal.querySelector('#peMergeCancel').onclick=()=>modal.remove();
+    modal.querySelector('#peMergeOk').onclick=async()=>{
+      const file=modal.querySelector('#peMergeFile').files[0];
+      if (!file) { alert('Selecciona un PDF.'); return; }
+      modal.querySelector('#peMergeOk').textContent='⏳ Uniendo…';
+      try {
+        const b2=new Uint8Array(await file.arrayBuffer());
+        const doc1=await S.PDFLib.PDFDocument.load(S.pdfBytes.slice());
+        const doc2=await S.PDFLib.PDFDocument.load(b2);
+        const pages=await doc1.copyPages(doc2,doc2.getPageIndices());
+        pages.forEach(p=>doc1.addPage(p));
+        const out=await doc1.save();
+        downloadBytes(out,'merged_'+S.fileName);
+        modal.remove();
+      } catch(e) { alert('Error al unir PDFs: '+e.message); modal.querySelector('#peMergeOk').textContent='Unir y descargar'; }
+    };
+  }
+
+  /* ══════════════════════════════════════════════════════
+     SPLIT
+  ══════════════════════════════════════════════════════ */
+  function openSplitModal() {
+    const modal=el('div','pe-modal-overlay');
+    modal.innerHTML=`<div class="pe-modal">
+      <h3>✂️ Dividir PDF</h3>
+      <label>Página de inicio</label>
+      <input type="number" id="peSplitFrom" value="1" min="1" max="${S.totalPages}">
+      <label>Página de fin</label>
+      <input type="number" id="peSplitTo" value="${S.totalPages}" min="1" max="${S.totalPages}">
+      <div style="font-size:12px;color:var(--text-3)">El documento tiene ${S.totalPages} páginas.</div>
+      <div class="pe-modal-foot">
+        <button class="pe-tb-btn" id="peSplitCancel">Cancelar</button>
+        <button class="pe-tb-btn active" id="peSplitOk">Extraer y descargar</button>
+      </div>
+    </div>`;
+    document.body.appendChild(modal);
+    modal.querySelector('#peSplitCancel').onclick=()=>modal.remove();
+    modal.querySelector('#peSplitOk').onclick=async()=>{
+      const from=parseInt(modal.querySelector('#peSplitFrom').value)-1;
+      const to  =parseInt(modal.querySelector('#peSplitTo').value)-1;
+      if (from>to||from<0||to>=S.totalPages) { alert('Rango de páginas inválido.'); return; }
+      modal.querySelector('#peSplitOk').textContent='⏳ Extrayendo…';
+      try {
+        const newDoc=await S.PDFLib.PDFDocument.create();
+        const src   =await S.PDFLib.PDFDocument.load(S.pdfBytes.slice());
+        const indices=Array.from({length:to-from+1},(_,i)=>from+i);
+        const pages =await newDoc.copyPages(src,indices);
+        pages.forEach(p=>newDoc.addPage(p));
+        const out=await newDoc.save();
+        downloadBytes(out,`paginas_${from+1}_${to+1}_${S.fileName}`);
+        modal.remove();
+      } catch(e) { alert('Error: '+e.message); modal.querySelector('#peSplitOk').textContent='Extraer y descargar'; }
+    };
+  }
+
+  /* ══════════════════════════════════════════════════════
+     EXPORT
+  ══════════════════════════════════════════════════════ */
+  async function exportPDF() {
+    try {
+      /* Build new doc respecting page order */
+      const src    = await S.PDFLib.PDFDocument.load(S.pdfBytes.slice());
+      const newDoc = await S.PDFLib.PDFDocument.create();
+      const pages  = await newDoc.copyPages(src, S.pageOrder);
+      pages.forEach(p=>newDoc.addPage(p));
+
+      /* Flatten text annotations as embedded text (basic) */
+      for (const [pgNum, annots] of Object.entries(S.annotations)) {
+        const pageIdx = S.pageOrder[parseInt(pgNum)-1];
+        if (pageIdx==null) continue;
+        const pg = newDoc.getPages()[S.pageOrder.indexOf(pageIdx)];
+        if (!pg) continue;
+        const { height } = pg.getSize();
+        const font = await newDoc.embedFont(S.PDFLib.StandardFonts.Helvetica);
+        annots.forEach(a=>{
+          if (a.type==='text'&&a.text) {
+            pg.drawText(a.text,{x:a.x/S.zoom,y:height-(a.y/S.zoom)-14,size:12,font,color:S.PDFLib.rgb(0.1,0.1,0.1)});
+          }
+        });
+      }
+
+      const out=await newDoc.save();
+      downloadBytes(out,'edited_'+S.fileName);
+      if(typeof toast==='function') toast('✅ PDF exportado correctamente.');
+    } catch(e) {
+      alert('Error al exportar: '+e.message);
+    }
+  }
+
+  function downloadBytes(bytes, name) {
+    const blob=new Blob([bytes],{type:'application/pdf'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url; a.download=name; a.click();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+  }
+
+  /* ══════════════════════════════════════════════════════
+     TOOLBAR WIRING
+  ══════════════════════════════════════════════════════ */
+  function wireToolbar() {
+    /* Open new file */
+    $id('peBtnOpen').onclick=()=>$id('peFileInput2').click();
+    $id('peFileInput2').onchange=e=>{if(e.target.files[0])loadFile(e.target.files[0]);};
+
+    /* Navigation */
+    $id('pePrev').onclick=()=>{ if(S.currentPage>1) renderPage(S.currentPage-1); };
+    $id('peNext').onclick=()=>{ if(S.currentPage<S.pageOrder.length) renderPage(S.currentPage+1); };
+
+    /* Zoom */
+    $id('peZoomIn') .onclick=()=>{ S.zoom=Math.min(3,+(S.zoom+0.2).toFixed(1)); renderPage(S.currentPage); };
+    $id('peZoomOut').onclick=()=>{ S.zoom=Math.max(0.4,+(S.zoom-0.2).toFixed(1)); renderPage(S.currentPage); };
+    $id('peZoomFit').onclick=()=>{ S.zoom=1.0; renderPage(S.currentPage); };
+
+    /* Tools */
+    document.querySelectorAll('[data-tool]').forEach(btn=>{
+      btn.onclick=()=>{
+        S.tool=btn.dataset.tool;
+        document.querySelectorAll('[data-tool]').forEach(b=>b.classList.remove('active'));
+        btn.classList.add('active');
+        const layer=$id('peAnnotLayer');
+        if (layer) { layer.className='pe-annot-layer '+S.tool; }
+      };
+    });
+
+    /* Page ops */
+    $id('peRotateL').onclick=()=>rotatePage(-90);
+    $id('peRotateR').onclick=()=>rotatePage(90);
+    $id('peDupPage') .onclick=duplicatePage;
+    $id('peDelPage') .onclick=()=>deletePage(S.currentPage-1);
+
+    /* Document ops */
+    $id('peMerge').onclick=openMergeModal;
+    $id('peSplit').onclick=openSplitModal;
+    $id('peExport').onclick=exportPDF;
+
+    /* Keyboard shortcuts */
+    document.addEventListener('keydown', e=>{
+      if ($id('panel-pdfeditor')&&!$id('panel-pdfeditor').classList.contains('active')) return;
+      if (e.target.isContentEditable||e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA') return;
+      if (e.key==='ArrowRight'||e.key==='ArrowDown') { e.preventDefault(); if(S.currentPage<S.pageOrder.length)renderPage(S.currentPage+1); }
+      if (e.key==='ArrowLeft' ||e.key==='ArrowUp')   { e.preventDefault(); if(S.currentPage>1)renderPage(S.currentPage-1); }
+      if (e.key==='+') { S.zoom=Math.min(3,+(S.zoom+0.2).toFixed(1)); renderPage(S.currentPage); }
+      if (e.key==='-') { S.zoom=Math.max(0.4,+(S.zoom-0.2).toFixed(1)); renderPage(S.currentPage); }
+    });
+
+    /* Setup annotation layer */
+    setupAnnotLayer($id('peAnnotLayer'));
+  }
+
+  /* ══════════════════════════════════════════════════════
+     BOOT — mount when tab is activated
+  ══════════════════════════════════════════════════════ */
+  function watchTab() {
+    const observer = new MutationObserver(()=>{
+      const panel=$id('panel-pdfeditor');
+      if (panel&&panel.classList.contains('active')&&!panel.dataset.mounted) mount();
+    });
+    const main=document.querySelector('main');
+    if (main) observer.observe(main,{subtree:true,attributes:true,attributeFilter:['class']});
+    /* Also mount if already active */
+    const panel=$id('panel-pdfeditor');
+    if (panel&&panel.classList.contains('active')) mount();
+  }
+
+  if (document.readyState==='loading') document.addEventListener('DOMContentLoaded',watchTab);
+  else watchTab();
+
+  window.MFPdfEditor = { loadFile, exportPDF };
 
 })();
 </script>
