@@ -449,22 +449,43 @@
 
     /* ── LOGIN SCREEN ── */
     #loginScreen{position:fixed;inset:0;z-index:9999;background:linear-gradient(135deg,#0f1117 0%,#1a1f2e 100%);display:flex;align-items:center;justify-content:center;padding:20px}
-    .login-box{background:#1a2035;border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:40px 36px;width:100%;max-width:380px;box-shadow:0 24px 60px rgba(0,0,0,.5)}
-    .login-logo{text-align:center;margin-bottom:28px}
-    .login-logo-icon{width:56px;height:56px;border-radius:14px;background:linear-gradient(135deg,#25c866,#1aa651);display:flex;align-items:center;justify-content:center;font-size:26px;margin:0 auto 12px}
-    .login-logo-title{font-size:22px;font-weight:800;color:#fff;letter-spacing:-.02em}
-    .login-logo-sub{font-size:12px;color:rgba(255,255,255,.4);margin-top:2px;letter-spacing:.04em;text-transform:uppercase}
+    .login-box{background:#1a2035;border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:40px 36px;width:100%;max-width:360px;box-shadow:0 24px 60px rgba(0,0,0,.5)}
+    .login-logo{text-align:center;margin-bottom:32px}
+    .login-logo-icon{width:64px;height:64px;border-radius:18px;background:linear-gradient(135deg,#25c866,#1aa651);display:flex;align-items:center;justify-content:center;font-size:30px;margin:0 auto 14px;box-shadow:0 8px 24px rgba(37,200,102,.35)}
+    .login-logo-title{font-size:24px;font-weight:800;color:#fff;letter-spacing:-.02em}
+    .login-logo-sub{font-size:11px;color:rgba(255,255,255,.35);margin-top:4px;letter-spacing:.08em;text-transform:uppercase}
+    /* PIN input */
+    .pin-label{font-size:11px;font-weight:700;color:rgba(255,255,255,.45);letter-spacing:.07em;text-transform:uppercase;text-align:center;margin-bottom:14px}
+    .pin-dots{display:flex;justify-content:center;gap:10px;margin-bottom:20px}
+    .pin-dot{width:13px;height:13px;border-radius:50%;border:2px solid rgba(255,255,255,.2);background:transparent;transition:all .2s}
+    .pin-dot.filled{background:#25c866;border-color:#25c866;box-shadow:0 0 8px rgba(37,200,102,.5)}
+    .pin-input{position:absolute;opacity:0;width:1px;height:1px}
+    .pin-keypad{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:20px}
+    .pin-key{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08);border-radius:10px;padding:14px 10px;color:#fff;font-size:18px;font-weight:600;cursor:pointer;text-align:center;transition:all .12s;font-family:inherit;user-select:none}
+    .pin-key:hover{background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.15)}
+    .pin-key:active{transform:scale(.94);background:rgba(37,200,102,.2);border-color:rgba(37,200,102,.4)}
+    .pin-key.zero{grid-column:2}
+    .pin-key.del{background:rgba(220,38,38,.1);border-color:rgba(220,38,38,.2);color:#f87171}
+    .pin-key.del:hover{background:rgba(220,38,38,.18)}
+    /* Buttons */
+    .login-btn{width:100%;padding:13px;background:linear-gradient(135deg,#25c866,#1aa651);border:none;border-radius:8px;color:#fff;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;transition:opacity .15s;letter-spacing:.01em}
+    .login-btn:hover{opacity:.9}
+    .login-btn:disabled{opacity:.4;cursor:not-allowed}
+    .login-error{background:rgba(220,38,38,.15);border:1px solid rgba(220,38,38,.3);border-radius:6px;padding:10px 12px;font-size:12.5px;color:#f87171;margin-bottom:14px;display:none;text-align:center}
+    .login-error.visible{display:block}
+    .login-link{display:block;text-align:center;margin-top:16px;font-size:12px;color:rgba(255,255,255,.35);cursor:pointer;transition:color .15s}
+    .login-link:hover{color:rgba(255,255,255,.65)}
+    @keyframes shake{0%,100%{transform:translateX(0)}20%,60%{transform:translateX(-8px)}40%,80%{transform:translateX(8px)}}
+    /* Recovery flow */
+    .recovery-box{display:none}
+    .recovery-box.active{display:block}
+    .pin-box{display:block}
+    .pin-box.hidden{display:none}
     .login-field{margin-bottom:14px}
     .login-field label{display:block;font-size:12px;font-weight:600;color:rgba(255,255,255,.5);letter-spacing:.04em;text-transform:uppercase;margin-bottom:6px}
     .login-field input{width:100%;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:12px 14px;color:#fff;font-size:14px;font-family:inherit;outline:none;box-sizing:border-box;transition:border-color .15s}
     .login-field input:focus{border-color:rgba(37,200,102,.5)}
-    .login-btn{width:100%;padding:13px;background:linear-gradient(135deg,#25c866,#1aa651);border:none;border-radius:8px;color:#fff;font-size:14px;font-weight:700;cursor:pointer;margin-top:6px;font-family:inherit;transition:opacity .15s;letter-spacing:.01em}
-    .login-btn:hover{opacity:.9}
-    .login-btn:disabled{opacity:.5;cursor:not-allowed}
-    .login-error{background:rgba(220,38,38,.15);border:1px solid rgba(220,38,38,.3);border-radius:6px;padding:10px 12px;font-size:12.5px;color:#f87171;margin-bottom:14px;display:none}
-    .login-error.visible{display:block}
-    .login-remember{display:flex;align-items:center;gap:8px;margin-top:14px;font-size:12px;color:rgba(255,255,255,.4);cursor:pointer}
-    .login-remember input{margin:0}
+    .login-info{font-size:12px;color:rgba(255,255,255,.4);text-align:center;margin-bottom:16px;line-height:1.5}
 
     /* ── USER MENU ── */
     .user-menu-btn{display:flex;align-items:center;gap:7px;padding:5px 10px;border-radius:var(--r-sm);border:1px solid var(--border);background:var(--bg-card);color:var(--text-2);cursor:pointer;font-size:12px;font-weight:600}
@@ -743,7 +764,7 @@
 </head>
 <body>
 
-<!-- ── LOGIN SCREEN ── -->
+<!-- ── LOGIN SCREEN — PIN ── -->
 <div id="loginScreen" style="display:none">
   <div class="login-box">
     <div class="login-logo">
@@ -751,19 +772,86 @@
       <div class="login-logo-title">MovFlow Hub</div>
       <div class="login-logo-sub">Inbox Intelligence</div>
     </div>
+
     <div id="loginError" class="login-error"></div>
-    <div class="login-field">
-      <label>Email</label>
-      <input type="email" id="loginEmail" placeholder="tu@email.com" autocomplete="email" />
+
+    <!-- ── Vista PIN ── -->
+    <div class="pin-box" id="pinBox">
+      <div class="pin-label">Introduce tu PIN de acceso</div>
+      <div class="pin-dots" id="pinDots">
+        <div class="pin-dot" id="pd0"></div>
+        <div class="pin-dot" id="pd1"></div>
+        <div class="pin-dot" id="pd2"></div>
+        <div class="pin-dot" id="pd3"></div>
+        <div class="pin-dot" id="pd4"></div>
+        <div class="pin-dot" id="pd5"></div>
+      </div>
+      <!-- Teclado numérico -->
+      <div class="pin-keypad" id="pinKeypad">
+        <button class="pin-key" data-k="1">1</button>
+        <button class="pin-key" data-k="2">2</button>
+        <button class="pin-key" data-k="3">3</button>
+        <button class="pin-key" data-k="4">4</button>
+        <button class="pin-key" data-k="5">5</button>
+        <button class="pin-key" data-k="6">6</button>
+        <button class="pin-key" data-k="7">7</button>
+        <button class="pin-key" data-k="8">8</button>
+        <button class="pin-key" data-k="9">9</button>
+        <button class="pin-key zero" data-k="0">0</button>
+        <button class="pin-key del" data-k="del">⌫</button>
+      </div>
+      <button class="login-btn" id="loginBtn" disabled>Entrar</button>
+      <span class="login-link" id="forgotPin">¿Olvidaste tu PIN?</span>
     </div>
-    <div class="login-field">
-      <label>Contraseña</label>
-      <input type="password" id="loginPass" placeholder="••••••••" autocomplete="current-password" />
+
+    <!-- ── Vista recuperación paso 1: solicitar código ── -->
+    <div class="recovery-box" id="recoveryBox1">
+      <div class="login-info">
+        Enviaremos un código de recuperación a tu email de contacto registrado.
+      </div>
+      <button class="login-btn" id="sendRecoveryBtn">Enviar código de recuperación</button>
+      <span class="login-link" id="backToPin1">← Volver al PIN</span>
     </div>
-    <label class="login-remember">
-      <input type="checkbox" id="loginRemember" checked /> Recordar sesión
-    </label>
-    <button class="login-btn" id="loginBtn" style="margin-top:20px">Iniciar sesión</button>
+
+    <!-- ── Vista recuperación paso 2: introducir código ── -->
+    <div class="recovery-box" id="recoveryBox2">
+      <div class="login-info" id="recoveryEmailHint">Introduce el código de 6 dígitos enviado a tu email.</div>
+      <div class="login-field">
+        <label>Código de recuperación</label>
+        <input type="number" id="recoveryCode" placeholder="000000" maxlength="6" inputmode="numeric" />
+      </div>
+      <button class="login-btn" id="verifyCodeBtn">Verificar código</button>
+      <span class="login-link" id="backToPin2">← Volver al PIN</span>
+    </div>
+
+    <!-- ── Vista recuperación paso 3: nuevo PIN ── -->
+    <div class="recovery-box" id="recoveryBox3">
+      <div class="login-info">Crea tu nuevo PIN de 6 dígitos.</div>
+      <div class="pin-label">Nuevo PIN</div>
+      <div class="pin-dots" id="newPinDots">
+        <div class="pin-dot" id="npd0"></div>
+        <div class="pin-dot" id="npd1"></div>
+        <div class="pin-dot" id="npd2"></div>
+        <div class="pin-dot" id="npd3"></div>
+        <div class="pin-dot" id="npd4"></div>
+        <div class="pin-dot" id="npd5"></div>
+      </div>
+      <div class="pin-keypad" id="newPinKeypad">
+        <button class="pin-key" data-k="1">1</button>
+        <button class="pin-key" data-k="2">2</button>
+        <button class="pin-key" data-k="3">3</button>
+        <button class="pin-key" data-k="4">4</button>
+        <button class="pin-key" data-k="5">5</button>
+        <button class="pin-key" data-k="6">6</button>
+        <button class="pin-key" data-k="7">7</button>
+        <button class="pin-key" data-k="8">8</button>
+        <button class="pin-key" data-k="9">9</button>
+        <button class="pin-key zero" data-k="0">0</button>
+        <button class="pin-key del" data-k="del">⌫</button>
+      </div>
+      <button class="login-btn" id="setNewPinBtn" disabled>Guardar nuevo PIN</button>
+      <span class="login-link" id="backToPin3">← Volver al PIN</span>
+    </div>
   </div>
 </div>
 
@@ -2322,22 +2410,8 @@ const Auth = {
   },
 
   _scheduleRefresh(expiresIn, remember) {
+    // PIN sessions are valid for 8h — no refresh needed
     clearTimeout(this._refreshTimer);
-    const ms = Math.max(0, (expiresIn - 300) * 1000); // 5 min early
-    this._refreshTimer = setTimeout(async () => {
-      const s = this.load();
-      if (!s || !s.refreshToken) return;
-      try {
-        const r = await fetch('/.netlify/functions/auth?action=refresh', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ refresh_token: s.refreshToken }),
-        });
-        if (r.ok) {
-          const data = await r.json();
-          this.save(data.token, data.refresh_token, data.expires_in, this.loadUser(), remember);
-        } else { this.logout(); }
-      } catch {}
-    }, ms);
   },
 
   _resetInactivity() {
@@ -2362,25 +2436,15 @@ const Auth = {
   async verify() {
     const s = this.load();
     if (!s) return null;
-    // If expired, try refresh first
-    if (this.isExpired()) {
-      if (!s.refreshToken) return null;
-      const r = await fetch('/.netlify/functions/auth?action=refresh', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refresh_token: s.refreshToken }),
-      }).catch(() => null);
-      if (!r || !r.ok) return null;
-      const data = await r.json();
-      this.save(data.token, data.refresh_token, data.expires_in, this.loadUser(), s.remember);
-    }
-    // Verify token with server
+    // PIN tokens don't refresh — just verify with pin-auth
     try {
-      const r = await fetch('/.netlify/functions/auth?action=me', {
+      const r = await fetch('/.netlify/functions/pin-auth?action=verify', {
+        method: 'GET',
         headers: { 'Authorization': 'Bearer ' + this.getToken() },
       });
       if (!r.ok) return null;
       const data = await r.json();
-      return data.user;
+      return data.user || { role: 'admin', display_name: 'MovFlow Admin' };
     } catch { return null; }
   },
 };
@@ -2440,6 +2504,7 @@ const AdminPanel = {
         '<div class="admin-tab active" data-tab="users">👥 Usuarios</div>' +
         '<div class="admin-tab" data-tab="create">➕ Nuevo usuario</div>' +
         '<div class="admin-tab" data-tab="activity">📋 Actividad</div>' +
+        '<div class="admin-tab" data-tab="security">🔐 Seguridad</div>' +
       '</div>' +
       '<div class="admin-body" id="adminBody"><div style="text-align:center;padding:30px;color:var(--text-3)">Cargando…</div></div>';
 
@@ -2555,6 +2620,94 @@ const AdminPanel = {
           '</tr>';
         }).join('') +
         '</tbody></table>';
+    }
+
+    if (tabName === 'security') {
+      body.innerHTML = `
+        <div style="padding:20px;max-width:480px">
+          <h3 style="font-size:14px;font-weight:700;color:var(--text-1);margin-bottom:20px">🔐 Seguridad</h3>
+
+          <!-- Cambiar PIN -->
+          <div style="background:var(--hover);border-radius:var(--r-sm);padding:16px;margin-bottom:16px">
+            <div style="font-size:13px;font-weight:700;color:var(--text-1);margin-bottom:12px">Cambiar PIN de acceso</div>
+            <div class="login-field" style="margin-bottom:10px">
+              <label style="color:var(--text-2)">PIN actual</label>
+              <input type="password" id="secCurrPin" placeholder="······" maxlength="6" inputmode="numeric"
+                style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);padding:8px 10px;color:var(--text-1);font-size:14px;width:100%;box-sizing:border-box;font-family:inherit;outline:none">
+            </div>
+            <div class="login-field" style="margin-bottom:10px">
+              <label style="color:var(--text-2)">Nuevo PIN (6 dígitos)</label>
+              <input type="password" id="secNewPin" placeholder="······" maxlength="6" inputmode="numeric"
+                style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);padding:8px 10px;color:var(--text-1);font-size:14px;width:100%;box-sizing:border-box;font-family:inherit;outline:none">
+            </div>
+            <button id="secChangePinBtn" style="padding:8px 18px;background:var(--accent);color:#fff;border:none;border-radius:var(--r-sm);font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">Cambiar PIN</button>
+            <div id="secPinMsg" style="font-size:12px;margin-top:8px;display:none"></div>
+          </div>
+
+          <!-- Cambiar email de recuperación -->
+          <div style="background:var(--hover);border-radius:var(--r-sm);padding:16px;margin-bottom:16px">
+            <div style="font-size:13px;font-weight:700;color:var(--text-1);margin-bottom:12px">Email de recuperación</div>
+            <div class="login-field" style="margin-bottom:10px">
+              <label style="color:var(--text-2)">PIN actual (para confirmar)</label>
+              <input type="password" id="secPinForEmail" placeholder="······" maxlength="6" inputmode="numeric"
+                style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);padding:8px 10px;color:var(--text-1);font-size:14px;width:100%;box-sizing:border-box;font-family:inherit;outline:none">
+            </div>
+            <div class="login-field" style="margin-bottom:10px">
+              <label style="color:var(--text-2)">Nuevo email de recuperación</label>
+              <input type="email" id="secNewEmail" placeholder="email@ejemplo.com"
+                style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);padding:8px 10px;color:var(--text-1);font-size:14px;width:100%;box-sizing:border-box;font-family:inherit;outline:none">
+            </div>
+            <button id="secChangeEmailBtn" style="padding:8px 18px;background:var(--accent);color:#fff;border:none;border-radius:var(--r-sm);font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">Actualizar email</button>
+            <div id="secEmailMsg" style="font-size:12px;margin-top:8px;display:none"></div>
+          </div>
+        </div>`;
+
+      // Wire security actions
+      const msgShow = (el, msg, ok) => {
+        el.textContent = msg;
+        el.style.color = ok ? '#059669' : '#dc2626';
+        el.style.display = 'block';
+        setTimeout(() => el.style.display = 'none', 4000);
+      };
+
+      document.getElementById('secChangePinBtn')?.addEventListener('click', async () => {
+        const curr = document.getElementById('secCurrPin').value.trim();
+        const nw   = document.getElementById('secNewPin').value.trim();
+        const msg  = document.getElementById('secPinMsg');
+        if (!/^\d{6}$/.test(curr) || !/^\d{6}$/.test(nw)) { msgShow(msg,'Ambos PIN deben tener 6 dígitos.',false); return; }
+        const btn = document.getElementById('secChangePinBtn');
+        btn.disabled = true; btn.textContent = 'Guardando…';
+        try {
+          const r = await fetch('/.netlify/functions/pin-auth?action=change_pin', {
+            method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
+            body: JSON.stringify({ current_pin: curr, new_pin: nw }),
+          });
+          const d = await r.json();
+          msgShow(msg, d.error || (d.ok ? '✅ PIN actualizado correctamente.' : 'Error.'), d.ok);
+          if (d.ok) { document.getElementById('secCurrPin').value=''; document.getElementById('secNewPin').value=''; }
+        } catch(e) { msgShow(msg,'Error de conexión.',false); }
+        finally { btn.disabled=false; btn.textContent='Cambiar PIN'; }
+      });
+
+      document.getElementById('secChangeEmailBtn')?.addEventListener('click', async () => {
+        const pin   = document.getElementById('secPinForEmail').value.trim();
+        const email = document.getElementById('secNewEmail').value.trim();
+        const msg   = document.getElementById('secEmailMsg');
+        if (!/^\d{6}$/.test(pin)) { msgShow(msg,'PIN debe tener 6 dígitos.',false); return; }
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { msgShow(msg,'Email inválido.',false); return; }
+        const btn = document.getElementById('secChangeEmailBtn');
+        btn.disabled=true; btn.textContent='Guardando…';
+        try {
+          const r = await fetch('/.netlify/functions/pin-auth?action=change_email', {
+            method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
+            body: JSON.stringify({ pin, email }),
+          });
+          const d = await r.json();
+          msgShow(msg, d.error || (d.ok ? '✅ Email actualizado.' : 'Error.'), d.ok);
+          if (d.ok) { document.getElementById('secPinForEmail').value=''; document.getElementById('secNewEmail').value=''; }
+        } catch(e) { msgShow(msg,'Error de conexión.',false); }
+        finally { btn.disabled=false; btn.textContent='Actualizar email'; }
+      });
     }
   },
 };
@@ -4195,44 +4348,206 @@ window.openAttachmentDiagnostic = openAttachmentDiagnostic;
 // ── Auto-refresh every 60s ──
 setInterval(loadAll, 60000);
 
-// ── AUTH: Wire login form ──
+// ── AUTH: PIN login system ──
 const loginBtn = document.getElementById('loginBtn');
 const loginErr = document.getElementById('loginError');
 
-async function doLogin() {
-  const email    = document.getElementById('loginEmail').value.trim();
-  const password = document.getElementById('loginPass').value;
-  const remember = document.getElementById('loginRemember').checked;
-  if (!email || !password) { loginErr.textContent = 'Completa todos los campos'; loginErr.classList.add('visible'); return; }
-  loginBtn.disabled = true;
-  loginBtn.textContent = 'Iniciando sesión…';
+/* ── PIN state ── */
+let pinValue = '';
+let newPinValue = '';
+let recoveryToken = null;
+
+function showLoginErr(msg) {
+  loginErr.textContent = msg;
+  loginErr.classList.add('visible');
+}
+function clearLoginErr() {
   loginErr.classList.remove('visible');
+}
+
+/* ── Update PIN dots ── */
+function updateDots(value, prefix) {
+  for (let i = 0; i < 6; i++) {
+    const dot = document.getElementById(prefix + i);
+    if (dot) dot.classList.toggle('filled', i < value.length);
+  }
+}
+
+/* ── PIN keypad logic ── */
+function setupKeypad(keypadId, dotsPrefix, getValue, setValue, onComplete) {
+  const kp = document.getElementById(keypadId);
+  if (!kp) return;
+  kp.addEventListener('click', e => {
+    const key = e.target.closest('[data-k]');
+    if (!key) return;
+    const k = key.dataset.k;
+    let val = getValue();
+    if (k === 'del') {
+      val = val.slice(0, -1);
+    } else if (val.length < 6) {
+      val = val + k;
+    }
+    setValue(val);
+    updateDots(val, dotsPrefix);
+    clearLoginErr();
+    if (val.length === 6 && onComplete) onComplete(val);
+  });
+}
+
+/* ── Main PIN keypad ── */
+setupKeypad('pinKeypad', 'pd',
+  () => pinValue,
+  v  => {
+    pinValue = v;
+    const btn = document.getElementById('loginBtn');
+    if (btn) btn.disabled = v.length < 6;
+  },
+  v  => doLogin()
+);
+
+/* ── New PIN keypad (recovery step 3) ── */
+setupKeypad('newPinKeypad', 'npd',
+  () => newPinValue,
+  v  => {
+    newPinValue = v;
+    const btn = document.getElementById('setNewPinBtn');
+    if (btn) btn.disabled = v.length < 6;
+  },
+  null
+);
+
+/* ── Keyboard support ── */
+document.addEventListener('keydown', ev => {
+  if (!document.getElementById('loginScreen') || document.getElementById('loginScreen').style.display === 'none') return;
+  if (ev.key >= '0' && ev.key <= '9') {
+    // Simulate keypad click on active view
+    const activeRecovery = document.querySelector('.recovery-box.active');
+    if (!activeRecovery && pinValue.length < 6) {
+      pinValue += ev.key;
+      updateDots(pinValue, 'pd');
+      if (loginBtn) loginBtn.disabled = pinValue.length < 6;
+      if (pinValue.length === 6) doLogin();
+    } else if (activeRecovery && activeRecovery.id === 'recoveryBox3' && newPinValue.length < 6) {
+      newPinValue += ev.key;
+      updateDots(newPinValue, 'npd');
+      const btn = document.getElementById('setNewPinBtn');
+      if (btn) btn.disabled = newPinValue.length < 6;
+    }
+  }
+  if (ev.key === 'Backspace') {
+    const activeRecovery = document.querySelector('.recovery-box.active');
+    if (!activeRecovery) { pinValue = pinValue.slice(0,-1); updateDots(pinValue,'pd'); if(loginBtn)loginBtn.disabled=pinValue.length<6; }
+    else if (activeRecovery.id === 'recoveryBox3') { newPinValue = newPinValue.slice(0,-1); updateDots(newPinValue,'npd'); const b=document.getElementById('setNewPinBtn'); if(b)b.disabled=newPinValue.length<6; }
+  }
+  if (ev.key === 'Enter') doLogin();
+});
+
+/* ── Show/hide recovery views ── */
+function showView(viewId) {
+  document.getElementById('pinBox').classList.toggle('hidden', viewId !== 'pin');
+  ['recoveryBox1','recoveryBox2','recoveryBox3'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('active', id === viewId);
+  });
+  clearLoginErr();
+}
+
+document.getElementById('forgotPin')?.addEventListener('click', () => showView('recoveryBox1'));
+document.getElementById('backToPin1')?.addEventListener('click', () => { showView('pin'); pinValue=''; updateDots('','pd'); });
+document.getElementById('backToPin2')?.addEventListener('click', () => { showView('pin'); pinValue=''; updateDots('','pd'); });
+document.getElementById('backToPin3')?.addEventListener('click', () => { showView('pin'); pinValue=''; updateDots('','pd'); });
+
+/* ── Step 1: Send recovery email ── */
+document.getElementById('sendRecoveryBtn')?.addEventListener('click', async () => {
+  const btn = document.getElementById('sendRecoveryBtn');
+  btn.disabled = true; btn.textContent = 'Enviando…';
+  clearLoginErr();
   try {
-    const r = await fetch('/.netlify/functions/auth?action=login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    });
+    const r    = await fetch('/.netlify/functions/pin-auth?action=request_recovery', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
+    const data = await r.json();
+    if (!r.ok || data.error) { showLoginErr(data.error || 'Error al enviar.'); }
+    else {
+      const hint = document.getElementById('recoveryEmailHint');
+      if (hint && data.email_hint) hint.textContent = `Código enviado a ${data.email_hint}. Revisa tu bandeja de entrada.`;
+      showView('recoveryBox2');
+    }
+  } catch(e) { showLoginErr('Error de conexión: ' + e.message); }
+  finally { btn.disabled = false; btn.textContent = 'Enviar código de recuperación'; }
+});
+
+/* ── Step 2: Verify recovery code ── */
+document.getElementById('verifyCodeBtn')?.addEventListener('click', async () => {
+  const code = document.getElementById('recoveryCode')?.value.trim();
+  if (!code || code.length !== 6) { showLoginErr('Introduce el código de 6 dígitos.'); return; }
+  const btn = document.getElementById('verifyCodeBtn');
+  btn.disabled = true; btn.textContent = 'Verificando…';
+  clearLoginErr();
+  try {
+    const r    = await fetch('/.netlify/functions/pin-auth?action=verify_recovery', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ code }) });
+    const data = await r.json();
+    if (!r.ok || data.error) { showLoginErr(data.error || 'Código incorrecto.'); }
+    else {
+      recoveryToken = data.recovery_token;
+      newPinValue = ''; updateDots('', 'npd');
+      showView('recoveryBox3');
+    }
+  } catch(e) { showLoginErr('Error de conexión: ' + e.message); }
+  finally { btn.disabled = false; btn.textContent = 'Verificar código'; }
+});
+
+/* ── Step 3: Set new PIN ── */
+document.getElementById('setNewPinBtn')?.addEventListener('click', async () => {
+  if (newPinValue.length !== 6) { showLoginErr('El PIN debe tener 6 dígitos.'); return; }
+  const btn = document.getElementById('setNewPinBtn');
+  btn.disabled = true; btn.textContent = 'Guardando…';
+  clearLoginErr();
+  try {
+    const r    = await fetch('/.netlify/functions/pin-auth?action=set_new_pin', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ pin: newPinValue, recovery_token: recoveryToken }) });
+    const data = await r.json();
+    if (!r.ok || data.error) { showLoginErr(data.error || 'Error al guardar PIN.'); }
+    else {
+      recoveryToken = null;
+      showView('pin');
+      pinValue = ''; updateDots('', 'pd');
+      showLoginErr('✅ PIN actualizado correctamente. Ya puedes acceder.');
+      loginErr.style.background = 'rgba(37,200,102,.15)';
+      loginErr.style.borderColor = 'rgba(37,200,102,.3)';
+      loginErr.style.color = '#4ade80';
+    }
+  } catch(e) { showLoginErr('Error de conexión: ' + e.message); }
+  finally { btn.disabled = false; btn.textContent = 'Guardar nuevo PIN'; }
+});
+
+/* ── Main login (verify PIN) ── */
+async function doLogin() {
+  if (pinValue.length !== 6) return;
+  const btn = document.getElementById('loginBtn');
+  btn.disabled = true; btn.textContent = 'Verificando…';
+  clearLoginErr();
+  try {
+    const r    = await fetch('/.netlify/functions/pin-auth?action=verify_pin', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ pin: pinValue }) });
     const data = await r.json();
     if (!r.ok || data.error) {
-      loginErr.textContent = data.error || 'Error de autenticación';
-      loginErr.classList.add('visible');
+      pinValue = ''; updateDots('', 'pd');
+      showLoginErr(data.error || 'PIN incorrecto.');
+      // Shake animation
+      const box = document.querySelector('.login-box');
+      if (box) { box.style.animation='shake .4s'; setTimeout(()=>box.style.animation='',400); }
     } else {
-      Auth.save(data.token, data.refresh_token, data.expires_in, data.user, remember);
+      Auth.save(data.token, null, 28800, data.user, true);
       showApp(data.user);
       loadAll();
     }
-  } catch (e) {
-    loginErr.textContent = 'Error de conexión: ' + e.message;
-    loginErr.classList.add('visible');
+  } catch(e) {
+    pinValue = ''; updateDots('', 'pd');
+    showLoginErr('Error de conexión: ' + e.message);
   } finally {
-    loginBtn.disabled = false;
-    loginBtn.textContent = 'Iniciar sesión';
+    btn.disabled = pinValue.length < 6;
+    btn.textContent = 'Entrar';
   }
 }
 
 if (loginBtn) loginBtn.addEventListener('click', doLogin);
-document.getElementById('loginPass') && document.getElementById('loginPass').addEventListener('keydown', ev => { if (ev.key === 'Enter') doLogin(); });
 
 // ── AUTH: Wire user menu ──
 const userMenuBtn = document.getElementById('userMenuBtn');
