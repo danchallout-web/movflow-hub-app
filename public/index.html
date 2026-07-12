@@ -5347,8 +5347,9 @@ No incluyas explicaciones, solo el documento.`;
   /* Objects */
   .p3-obj{position:absolute;box-sizing:border-box;cursor:move;user-select:none}
   .p3-obj.selected{outline:1.5px solid #3b82f6;outline-offset:0}
-  .p3-obj-text{background:transparent;padding:2px 4px;line-height:1.35;white-space:pre-wrap;word-break:break-word;min-width:40px;min-height:18px}
-  .p3-obj-text[contenteditable="true"]{cursor:text;outline:2px solid #3b82f6;background:rgba(255,255,255,.85)}
+  .p3-obj-text{background:transparent;padding:2px 4px;line-height:1.35;white-space:pre-wrap;word-break:break-word;min-width:40px;min-height:18px;caret-color:#3b82f6}
+  .p3-obj-text[contenteditable="true"],.p3-obj-tedit[contenteditable="true"]{cursor:text;outline:2px solid #3b82f6;background:rgba(255,255,255,.92);box-shadow:0 2px 12px rgba(0,0,0,.14);z-index:15}
+  .p3-obj-text[data-empty="1"]:not([contenteditable="true"])::before{content:'Texto';color:#9ca3af;font-style:italic}
   .p3-obj-hl{opacity:.42;pointer-events:all}
   .p3-obj-shape svg{display:block;width:100%;height:100%;overflow:visible}
   .p3-obj-img img{width:100%;height:100%;object-fit:contain;display:block;pointer-events:none}
@@ -5665,7 +5666,8 @@ No incluyas explicaciones, solo el documento.`;
 
   function renderObjects() {
     const ol = $id('p3OL'); if(!ol) return;
-    ol.innerHTML = '';
+    /* Solo eliminar objetos de edición — NUNCA la capa de texto detectado */
+    ol.querySelectorAll('.p3-obj').forEach(n => n.remove());
     const objs = S.objects[S.current] || [];
     objs.forEach(o => ol.appendChild(buildObjEl(o)));
   }
@@ -5680,8 +5682,14 @@ No incluyas explicaciones, solo el documento.`;
       el.classList.add('p3-obj-text');
       el.style.color = o.color || '#1f2937';
       el.style.fontSize = (o.fontSize||14)+'px';
+      el.style.fontFamily = ({Helvetica:'Helvetica,Arial,sans-serif',Times:'\'Times New Roman\',Times,serif',Courier:'\'Courier New\',Courier,monospace'})[o.fontFamily||'Helvetica'];
+      el.style.fontWeight = o.bold ? '700' : '400';
+      el.style.fontStyle = o.italic ? 'italic' : 'normal';
+      el.style.textAlign = o.align || 'left';
       el.style.height = 'auto';
-      el.textContent = o.text || 'Texto';
+      el.style.minHeight = (o.fontSize||14)*1.3+'px';
+      el.textContent = o.text || '';
+      if (!o.text) el.dataset.empty = '1';
     } else if (o.type === 'highlight') {
       el.classList.add('p3-obj-hl');
       el.style.background = o.fill || '#fef08a';
@@ -5744,6 +5752,9 @@ No incluyas explicaciones, solo el documento.`;
       if (S.current !== pageNum || S.mode !== 'editar') return; // user navigated away
 
       const edited = new Set((S.objects[pageNum]||[]).filter(o=>o.type==='textedit').map(o=>o.srcKey));
+      const validItems = tc.items.filter(it => it.str && it.str.trim());
+      if (!validItems.length && typeof toast === 'function')
+        toast('⚠️ No se detectó texto en esta página. Puede ser un PDF escaneado (imagen).');
 
       tc.items.forEach((item, idx) => {
         if (!item.str || !item.str.trim()) return;
@@ -5856,20 +5867,9 @@ No incluyas explicaciones, solo el documento.`;
     /* Double click text → edit */
     if (o.type === 'text' || o.type === 'textedit') {
       el.addEventListener('dblclick', e => {
-        if (S.mode !== 'anotar') return;
+        if (S.mode !== 'anotar' && S.mode !== 'editar') return;
         e.stopPropagation();
-        el.contentEditable = 'true';
-        el.focus();
-        const r = document.createRange(); r.selectNodeContents(el);
-        const s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
-        const onBlur = () => {
-          el.contentEditable = 'false';
-          const before = { text:o.text };
-          o.text = el.textContent;
-          if (before.text !== o.text) Cmd.push(makeMoveCmd(o, before, { text:o.text }));
-          el.removeEventListener('blur', onBlur);
-        };
-        el.addEventListener('blur', onBlur);
+        enterTextEditing(el, o, false);
       });
     }
   }
@@ -5926,6 +5926,51 @@ No incluyas explicaciones, solo el documento.`;
     document.addEventListener('mouseup',up);
   }
 
+  /* Editor de texto real: cursor visible, escritura directa,
+     Escape cancela, vacío elimina el objeto, cambios en undo stack */
+  function enterTextEditing(el, o, isNew) {
+    document.querySelectorAll('.p3-obj[contenteditable="true"]').forEach(x => x.blur());
+    const before = { text: o.text };
+    el.contentEditable = 'true';
+    el.classList.add('editing');
+    if (isNew) el.textContent = '';
+    el.focus();
+    /* Cursor al final */
+    const rg = document.createRange();
+    rg.selectNodeContents(el); rg.collapse(false);
+    const sl = window.getSelection(); sl.removeAllRanges(); sl.addRange(rg);
+
+    const onKey = ev => {
+      ev.stopPropagation();
+      if (ev.key === 'Escape') {
+        ev.preventDefault();
+        el.textContent = before.text || '';
+        el.blur();
+      }
+    };
+    const onBlur = () => {
+      el.contentEditable = 'false';
+      el.classList.remove('editing');
+      el.removeEventListener('keydown', onKey);
+      el.removeEventListener('blur', onBlur);
+      const txt = el.textContent.trim();
+      if (!txt) {
+        /* Texto vacío → eliminar objeto */
+        const arr = S.objects[S.current] || [];
+        const i = arr.indexOf(o);
+        if (i >= 0) { arr.splice(i, 1); if (!isNew) Cmd.push(makeDelCmd(S.current, o, i)); }
+        deselect();
+        return;
+      }
+      o.text = el.textContent;
+      if (!isNew && before.text !== o.text) Cmd.push(makeMoveCmd(o, before, { text: o.text }));
+      renderObjects();
+      if (S.selected === o) showProps(o);
+    };
+    el.addEventListener('keydown', onKey);
+    el.addEventListener('blur', onBlur);
+  }
+
   function select(o) {
     S.selected = o;
     renderObjects();
@@ -5955,8 +6000,22 @@ No incluyas explicaciones, solo el documento.`;
         <span style="font-size:11px;color:#9ca3af">Al</span><input type="number" id="p3pH" value="${Math.round(o.h)}">
       </div></div>`;
 
-    if (o.type === 'text') {
+    if (o.type === 'text' || o.type === 'textedit') {
       h += `<div class="p3-prow"><div class="p3-plbl">Texto</div>
+        <div class="p3-pctl" style="margin-bottom:6px">
+          <select id="p3pFF" style="flex:1;padding:5px;border:1px solid #e5e7eb;border-radius:6px;font-size:12px;font-family:inherit">
+            <option value="Helvetica" ${(o.fontFamily||'Helvetica')==='Helvetica'?'selected':''}>Helvetica</option>
+            <option value="Times" ${o.fontFamily==='Times'?'selected':''}>Times</option>
+            <option value="Courier" ${o.fontFamily==='Courier'?'selected':''}>Courier</option>
+          </select>
+        </div>
+        <div class="p3-pctl" style="margin-bottom:6px">
+          <button class="p3-pbtn" id="p3pBold" style="font-weight:800;${o.bold?'background:#dbeafe;border-color:#3b82f6':''}">B</button>
+          <button class="p3-pbtn" id="p3pItal" style="font-style:italic;${o.italic?'background:#dbeafe;border-color:#3b82f6':''}">I</button>
+          <button class="p3-pbtn" id="p3pAL" ${(o.align||'left')==='left'?'style="background:#dbeafe;border-color:#3b82f6"':''}>⇤</button>
+          <button class="p3-pbtn" id="p3pAC" ${o.align==='center'?'style="background:#dbeafe;border-color:#3b82f6"':''}>⇹</button>
+          <button class="p3-pbtn" id="p3pAR" ${o.align==='right'?'style="background:#dbeafe;border-color:#3b82f6"':''}>⇥</button>
+        </div>
         <div class="p3-pctl" style="margin-bottom:6px"><input type="color" id="p3pColor" value="${o.color||'#1f2937'}"><span style="font-size:11px;color:#6b7280">Color</span></div>
         <div class="p3-pctl"><input type="number" id="p3pFS" value="${o.fontSize||14}" min="8" max="72"><span style="font-size:11px;color:#6b7280">Tamaño px</span></div></div>`;
     }
@@ -5993,6 +6052,13 @@ No incluyas explicaciones, solo el documento.`;
     const col = (id, fn) => { const el=$id(id); if(el) el.oninput = () => { fn(el.value); applyObj(o); }; };
     col('p3pColor', v=>o.color=v); col('p3pFill', v=>o.fill=v); col('p3pStroke', v=>o.stroke=v);
     const fs=$id('p3pFS'); if(fs) fs.oninput=()=>{ o.fontSize=parseInt(fs.value)||14; applyObj(o); };
+    const ff=$id('p3pFF'); if(ff) ff.onchange=()=>{ o.fontFamily=ff.value; applyObj(o); };
+    const bd=$id('p3pBold'); if(bd) bd.onclick=()=>{ o.bold=!o.bold; applyObj(o); showProps(o); };
+    const it=$id('p3pItal'); if(it) it.onclick=()=>{ o.italic=!o.italic; applyObj(o); showProps(o); };
+    const al=$id('p3pAL'), ac=$id('p3pAC'), ar=$id('p3pAR');
+    if(al) al.onclick=()=>{ o.align='left'; applyObj(o); showProps(o); };
+    if(ac) ac.onclick=()=>{ o.align='center'; applyObj(o); showProps(o); };
+    if(ar) ar.onclick=()=>{ o.align='right'; applyObj(o); showProps(o); };
     const sw=$id('p3pSW'); if(sw) sw.oninput=()=>{ o.strokeW=parseInt(sw.value); $id('p3pSWv').textContent=sw.value+'px'; applyObj(o); };
     const op=$id('p3pOp'); if(op) op.oninput=()=>{ o.opacity=parseInt(op.value)/100; $id('p3pOpv').textContent=op.value+'%'; applyObj(o); };
     $id('p3pDup').onclick = () => duplicateObj(o);
@@ -6036,12 +6102,15 @@ No incluyas explicaciones, solo el documento.`;
 
       if (S.tool === 'text') {
         const r = ol.getBoundingClientRect();
-        const o = newObj('text', { x:e.clientX-r.left, y:e.clientY-r.top, w:140, h:24, text:'Texto', color:S.style.color, fontSize:S.style.fontSize });
+        const o = newObj('text', { x:e.clientX-r.left, y:e.clientY-r.top - S.style.fontSize/2, w:180, h:S.style.fontSize*1.5, text:'', color:S.style.color, fontSize:S.style.fontSize, fontFamily:'Helvetica', align:'left' });
         (S.objects[S.current]=S.objects[S.current]||[]).push(o);
         Cmd.push(makeAddCmd(S.current,o));
-        select(o);
-        // Immediate edit
-        setTimeout(()=>{ const el=ol.querySelector(`[data-oid="${o.id}"]`); if(el){ el.dispatchEvent(new MouseEvent('dblclick',{bubbles:true})); } },40);
+        S.selected = o;
+        renderObjects();
+        showProps(o);
+        /* Cursor real inmediato — sin dblclick sintético */
+        const el = ol.querySelector(`[data-oid="${o.id}"]`);
+        if (el) enterTextEditing(el, o, true);
         return;
       }
 
@@ -6232,6 +6301,31 @@ No incluyas explicaciones, solo el documento.`;
         if (extra) p.setRotation(S.PDFLib.degrees((p.getRotation().angle + extra) % 360));
       });
       const font = await nd.embedFont(S.PDFLib.StandardFonts.Helvetica);
+      /* Resolver de fuentes con caché: familia + negrita + cursiva */
+      const SF = S.PDFLib.StandardFonts;
+      const fontMap = {
+        'Helvetica':SF.Helvetica,'Helvetica-B':SF.HelveticaBold,'Helvetica-I':SF.HelveticaOblique,'Helvetica-BI':SF.HelveticaBoldOblique,
+        'Times':SF.TimesRoman,'Times-B':SF.TimesRomanBold,'Times-I':SF.TimesRomanItalic,'Times-BI':SF.TimesRomanBoldItalic,
+        'Courier':SF.Courier,'Courier-B':SF.CourierBold,'Courier-I':SF.CourierOblique,'Courier-BI':SF.CourierBoldOblique,
+      };
+      const fontCache = { [SF.Helvetica]: font };
+      const resolveFont = async o => {
+        let key = o.fontFamily || 'Helvetica';
+        const mod = (o.bold?'B':'')+(o.italic?'I':'');
+        if (mod) key += '-'+mod;
+        const std = fontMap[key] || SF.Helvetica;
+        if (!fontCache[std]) fontCache[std] = await nd.embedFont(std);
+        return fontCache[std];
+      };
+      const alignX = (o, fnt, size) => {
+        if (!o.align || o.align==='left') return o.x/z;
+        try {
+          const lines = String(o.text||'').split('\n');
+          const tw = Math.max(...lines.map(l => fnt.widthOfTextAtSize(l, size)));
+          if (o.align==='center') return o.x/z + (o.w/z - tw)/2;
+          return o.x/z + (o.w/z - tw);
+        } catch(_) { return o.x/z; }
+      };
       const hexRgb = hx => {
         const h=(hx||'#000000').replace('#','');
         return S.PDFLib.rgb(parseInt(h.slice(0,2),16)/255, parseInt(h.slice(2,4),16)/255, parseInt(h.slice(4,6),16)/255);
@@ -6250,14 +6344,22 @@ No incluyas explicaciones, solo el documento.`;
           if (o.type==='textedit') {
             /* Cubrir texto original y dibujar el nuevo en su lugar */
             pg.drawRectangle({ x:(o.x-1)/z, y:height-(o.y+o.h)/z-1/z, width:(o.w+2)/z, height:(o.h+2)/z, color:hexRgb(o.bg||'#ffffff'), opacity:1 });
-            if (o.text) pg.drawText(String(o.text).slice(0,800), {
-              x:o.x/z, y:height-(o.y/z)-(o.fontSize||14)/z*0.92,
-              size:(o.fontSize||14)/z, font, color:hexRgb(o.color||'#111827'), opacity:op,
-            });
+            if (o.text) {
+              const fnt = await resolveFont(o);
+              const sz  = (o.fontSize||14)/z;
+              pg.drawText(String(o.text).slice(0,1000), {
+                x:o.x/z, y:height-(o.y/z)-sz*0.92,
+                size:sz, font:fnt, color:hexRgb(o.color||'#111827'), opacity:op,
+                lineHeight:sz*1.3,
+              });
+            }
           } else if (o.type==='text' && o.text) {
-            pg.drawText(String(o.text).slice(0,500), {
-              x:o.x/z, y:height-(o.y/z)-(o.fontSize||14)/z*1.1,
-              size:(o.fontSize||14)/z*1.0, font, color:hexRgb(o.color), opacity:op,
+            const fnt = await resolveFont(o);
+            const sz  = (o.fontSize||14)/z;
+            pg.drawText(String(o.text).slice(0,1000), {
+              x:alignX(o,fnt,sz), y:height-(o.y/z)-sz*1.05,
+              size:sz, font:fnt, color:hexRgb(o.color), opacity:op,
+              lineHeight:sz*1.3,
             });
           } else if (o.type==='highlight') {
             pg.drawRectangle({ x:o.x/z, y:height-(o.y+o.h)/z, width:o.w/z, height:o.h/z, color:hexRgb(o.fill||'#fef08a'), opacity:0.4*op });
