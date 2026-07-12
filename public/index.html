@@ -5387,6 +5387,12 @@ No incluyas explicaciones, solo el documento.`;
   .p3-mf{display:flex;gap:8px;justify-content:flex-end;margin-top:4px}
   .p3-sign-c{border:2px solid #e5e7eb;border-radius:9px;width:100%;cursor:crosshair;touch-action:none;background:#fafafa;display:block}
 
+  /* Text layer (modo Editar texto) */
+  .p3-tspan{position:absolute;cursor:text;color:transparent;border-radius:2px;white-space:pre;overflow:visible;font-family:Helvetica,Arial,sans-serif;transition:background .1s}
+  .p3-tspan:hover{background:rgba(59,130,246,.14);outline:1.5px dashed #3b82f6}
+  .p3-tspan.editing{background:#fff;color:#111827;outline:2px solid #3b82f6;z-index:20;box-shadow:0 2px 10px rgba(0,0,0,.15)}
+  .p3-obj-tedit{cursor:move}
+
   /* Status */
   .p3-status{background:#fff;border-top:1px solid #e5e7eb;padding:4px 14px;font-size:11px;color:#9ca3af;flex-shrink:0;display:flex;align-items:center;gap:10px}
   .p3-status b{color:#6b7280;font-weight:700}
@@ -5444,6 +5450,10 @@ No incluyas explicaciones, solo el documento.`;
     p.innerHTML = `<div style="flex:1;display:flex;align-items:center;justify-content:center;color:#6b7280;gap:10px;font-size:14px">⏳ Cargando…</div>`;
     try {
       await loadLibs();
+      /* ── Limpieza completa del documento anterior (evita fugas de memoria) ── */
+      if (S.doc) { try { await S.doc.destroy(); } catch(_){} S.doc = null; }
+      S.bytes = null; S.objects = {}; S.selected = null; S.rotations = {};
+      S.textCache = {};
       S.fileName = file.name;
       S.bytes    = new Uint8Array(await file.arrayBuffer());
       S.doc      = await S.pdfjs.getDocument({ data:S.bytes.slice() }).promise;
@@ -5472,11 +5482,13 @@ No incluyas explicaciones, solo el documento.`;
     <div class="p3-modes">
       <div class="p3-mode" data-mode="ver">👁 Ver</div>
       <div class="p3-mode active" data-mode="anotar">✏️ Anotar</div>
+      <div class="p3-mode" data-mode="editar">📝 Editar texto</div>
       <div class="p3-mode" data-mode="organizar">📑 Organizar</div>
       <div class="p3-modes-right">
         <span class="p3-fn">${esc(S.fileName)}</span>
         <button class="p3-mbtn" id="p3Undo" title="Deshacer (Ctrl+Z)" disabled>↩</button>
         <button class="p3-mbtn" id="p3Redo" title="Rehacer (Ctrl+Y)" disabled>↪</button>
+        <button class="p3-mbtn" id="p3New" title="Cerrar y abrir otro documento">🗋 Nuevo</button>
         <button class="p3-mbtn" id="p3Open">📂 Abrir</button>
         <input type="file" id="p3File2" accept=".pdf" style="display:none">
         <button class="p3-mbtn primary" id="p3Export">⬇ Exportar</button>
@@ -5517,8 +5529,10 @@ No incluyas explicaciones, solo el documento.`;
     document.querySelectorAll('.p3-mode').forEach(m => m.classList.toggle('active', m.dataset.mode === mode));
     const ol = $id('p3OL');
     if (ol) ol.classList.toggle('mode-ver', mode === 'ver');
-    if ($id('p3StMode')) $id('p3StMode').textContent = { ver:'Ver', anotar:'Anotar', organizar:'Organizar' }[mode];
+    if ($id('p3StMode')) $id('p3StMode').textContent = { ver:'Ver', anotar:'Anotar', editar:'Editar texto', organizar:'Organizar' }[mode];
     renderToolbar();
+    renderObjects();
+    if (mode === 'editar') renderTextLayer();
   }
 
   function renderToolbar() {
@@ -5562,6 +5576,13 @@ No incluyas explicaciones, solo el documento.`;
       </div>`;
     }
 
+    if (S.mode === 'editar') {
+      h += `<div class="p3-sep"></div>
+      <span style="font-size:12px;color:#6b7280;display:inline-flex;align-items:center;gap:6px">
+        📝 <b>Haz clic sobre cualquier texto del documento para editarlo.</b> El texto nuevo sustituirá visualmente al original manteniendo posición y tamaño.
+      </span>`;
+    }
+
     if (S.mode === 'organizar') {
       h += `<div class="p3-sep"></div><span class="p3-lbl">Página actual</span>
       <div class="p3-g">
@@ -5598,6 +5619,7 @@ No incluyas explicaciones, solo el documento.`;
       if (ol) { ol.style.width = vp.width+'px'; ol.style.height = vp.height+'px'; }
       updateLabels();
       renderObjects();
+      if (S.mode === 'editar') renderTextLayer();
       document.querySelectorAll('.p3-th').forEach((t,i)=>t.classList.toggle('active', i===S.current-1));
     } catch(e){ console.warn(e); }
     S.rendering = false;
@@ -5669,6 +5691,17 @@ No incluyas explicaciones, solo el documento.`;
     } else if (o.type === 'image' || o.type === 'sign') {
       el.classList.add('p3-obj-img');
       el.innerHTML = `<img src="${o.dataUrl}" draggable="false">`;
+    } else if (o.type === 'textedit') {
+      el.classList.add('p3-obj-tedit');
+      el.style.background = o.bg || '#ffffff';
+      el.style.color = o.color || '#111827';
+      el.style.fontSize = (o.fontSize||14)+'px';
+      el.style.fontFamily = o.fontFamily || 'Helvetica, Arial, sans-serif';
+      el.style.lineHeight = '1.15';
+      el.style.padding = '0 1px';
+      el.style.whiteSpace = 'pre';
+      el.style.overflow = 'hidden';
+      el.textContent = o.text || '';
     }
 
     /* Selection handles */
@@ -5683,6 +5716,112 @@ No incluyas explicaciones, solo el documento.`;
 
     wireObjEvents(el, o);
     return el;
+  }
+
+  /* ══════════════ TEXT LAYER: edición del texto original ══════════════
+     Usa PDF.js getTextContent() para detectar cada fragmento de texto
+     con su posición, tamaño y transformación exactos. Al hacer clic,
+     el fragmento se vuelve editable. Al confirmar, se crea un objeto
+     'textedit' que cubre el original y dibuja el texto nuevo en su
+     misma posición — técnica estándar de editores PDF comerciales. */
+  async function renderTextLayer() {
+    const ol = $id('p3OL'); if (!ol) return;
+    /* Quitar spans anteriores */
+    ol.querySelectorAll('.p3-tspan').forEach(n => n.remove());
+    if (S.mode !== 'editar' || !S.doc) return;
+
+    const pageNum = S.current;
+    const realIdx = S.order[pageNum-1];
+    try {
+      const page = await S.doc.getPage(realIdx+1);
+      const extraRot = S.rotations[realIdx] || 0;
+      const vp = page.getViewport({ scale:S.zoom, rotation:(page.rotate+extraRot)%360 });
+
+      /* Cache del textContent por página (evita repetir extracción) */
+      S.textCache = S.textCache || {};
+      let tc = S.textCache[realIdx];
+      if (!tc) { tc = await page.getTextContent(); S.textCache[realIdx] = tc; }
+      if (S.current !== pageNum || S.mode !== 'editar') return; // user navigated away
+
+      const edited = new Set((S.objects[pageNum]||[]).filter(o=>o.type==='textedit').map(o=>o.srcKey));
+
+      tc.items.forEach((item, idx) => {
+        if (!item.str || !item.str.trim()) return;
+        const key = realIdx + ':' + idx;
+        if (edited.has(key)) return; // ya editado — lo cubre el objeto textedit
+
+        const tx = S.pdfjs.Util.transform(vp.transform, item.transform);
+        const fontH = Math.hypot(tx[2], tx[3]);
+        if (fontH < 4) return;
+        const x = tx[4];
+        const y = tx[5] - fontH;
+        const w = Math.max(item.width * S.zoom, fontH * 0.6);
+
+        const span = document.createElement('div');
+        span.className = 'p3-tspan';
+        span.dataset.key = key;
+        span.style.cssText = `left:${x}px;top:${y}px;width:${w}px;height:${fontH*1.28}px;font-size:${fontH}px;line-height:${fontH*1.28}px`;
+        span.textContent = item.str;
+        span.title = 'Clic para editar este texto';
+
+        span.addEventListener('click', e => {
+          e.stopPropagation();
+          beginTextEdit(span, item, { key, x, y, w, h:fontH*1.28, fontH });
+        });
+        ol.appendChild(span);
+      });
+    } catch(e) { console.warn('TextLayer:', e); }
+  }
+
+  function beginTextEdit(span, item, geo) {
+    /* Cerrar otros editores abiertos */
+    document.querySelectorAll('.p3-tspan[contenteditable="true"]').forEach(s => s.blur());
+
+    const original = item.str;
+    span.contentEditable = 'true';
+    span.classList.add('editing');
+    span.focus();
+    const r = document.createRange(); r.selectNodeContents(span);
+    const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+
+    const finish = commit => {
+      span.contentEditable = 'false';
+      span.classList.remove('editing');
+      const newText = span.textContent;
+      if (!commit || newText === original) { span.textContent = original; return; }
+
+      /* Crear objeto textedit que cubre el original y muestra el nuevo texto.
+         Si el texto nuevo es más largo, el ancho crece automáticamente. */
+      const approxCharW = geo.fontH * 0.52;
+      const newW = Math.max(geo.w, newText.length * approxCharW);
+      const o = newObj('textedit', {
+        x: geo.x, y: geo.y, w: newW, h: geo.h,
+        text: newText,
+        fontSize: Math.round(geo.fontH),
+        color: '#111827',
+        bg: '#ffffff',
+        srcKey: geo.key,
+        srcText: original,
+      });
+      (S.objects[S.current] = S.objects[S.current] || []).push(o);
+      Cmd.push(makeAddCmd(S.current, o));
+      span.remove();          // el span original desaparece
+      renderObjects();        // el objeto textedit lo sustituye visualmente
+      if (typeof toast === 'function') toast('✏️ Texto editado. Se aplicará al exportar.');
+    };
+
+    const onBlur = () => { finish(true); cleanup(); };
+    const onKey  = e => {
+      if (e.key === 'Enter') { e.preventDefault(); span.blur(); }
+      if (e.key === 'Escape') { e.preventDefault(); finish(false); cleanup(); }
+      e.stopPropagation();
+    };
+    const cleanup = () => {
+      span.removeEventListener('blur', onBlur);
+      span.removeEventListener('keydown', onKey);
+    };
+    span.addEventListener('blur', onBlur);
+    span.addEventListener('keydown', onKey);
   }
 
   function shapeSVG(o) {
@@ -5715,7 +5854,7 @@ No incluyas explicaciones, solo el documento.`;
     });
 
     /* Double click text → edit */
-    if (o.type === 'text') {
+    if (o.type === 'text' || o.type === 'textedit') {
       el.addEventListener('dblclick', e => {
         if (S.mode !== 'anotar') return;
         e.stopPropagation();
@@ -6108,7 +6247,14 @@ No incluyas explicaciones, solo el documento.`;
 
         for (const o of objs) {
           const op = o.opacity ?? 1;
-          if (o.type==='text' && o.text) {
+          if (o.type==='textedit') {
+            /* Cubrir texto original y dibujar el nuevo en su lugar */
+            pg.drawRectangle({ x:(o.x-1)/z, y:height-(o.y+o.h)/z-1/z, width:(o.w+2)/z, height:(o.h+2)/z, color:hexRgb(o.bg||'#ffffff'), opacity:1 });
+            if (o.text) pg.drawText(String(o.text).slice(0,800), {
+              x:o.x/z, y:height-(o.y/z)-(o.fontSize||14)/z*0.92,
+              size:(o.fontSize||14)/z, font, color:hexRgb(o.color||'#111827'), opacity:op,
+            });
+          } else if (o.type==='text' && o.text) {
             pg.drawText(String(o.text).slice(0,500), {
               x:o.x/z, y:height-(o.y/z)-(o.fontSize||14)/z*1.1,
               size:(o.fontSize||14)/z*1.0, font, color:hexRgb(o.color), opacity:op,
@@ -6153,6 +6299,18 @@ No incluyas explicaciones, solo el documento.`;
     document.querySelectorAll('.p3-mode').forEach(m => m.onclick=()=>setMode(m.dataset.mode));
     $id('p3Undo').onclick = () => Cmd.undo();
     $id('p3Redo').onclick = () => Cmd.redo();
+    const nuevoBtn = $id('p3New');
+    if (nuevoBtn) nuevoBtn.onclick = async () => {
+      const hasChanges = Object.keys(S.objects).some(k => (S.objects[k]||[]).length);
+      if (hasChanges && !confirm('Hay cambios sin exportar. ¿Cerrar este documento?')) return;
+      if (S.doc) { try { await S.doc.destroy(); } catch(_){} S.doc = null; }
+      S.bytes = null; S.objects = {}; S.selected = null; S.rotations = {}; S.textCache = {};
+      Cmd.clear();
+      const p = $id('panel-pdfeditor');
+      if (p) { p.dataset.mounted = ''; delete p.dataset.mounted; }
+      showDropZone();
+      if (p) p.dataset.mounted = '1';
+    };
     $id('p3Open').onclick = () => $id('p3File2').click();
     $id('p3File2').onchange = e => { if(e.target.files[0]) loadPDF(e.target.files[0]); };
     $id('p3Export').onclick = exportPDF;
