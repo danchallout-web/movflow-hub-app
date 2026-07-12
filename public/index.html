@@ -80,6 +80,11 @@
 
     /* MAIN */
     .main{margin-left:var(--sb);flex:1;min-width:0}
+    /* No leídos: destacados estilo Gmail */
+    .ec.unread .ec-from{font-weight:800;color:var(--text)}
+    .ec.unread .ec-subj{font-weight:700;color:var(--text)}
+    .ec.unread{background:linear-gradient(90deg,rgba(37,99,235,.035),transparent)}
+    .unread-pip{position:absolute;left:6px;top:50%;transform:translateY(-50%);width:8px;height:8px;border-radius:50%;background:var(--accent);box-shadow:0 0 6px rgba(37,99,235,.5)}
     .panel{display:none}
     .panel.active{display:block}
     /* PDF editor panel: full-height isolated workspace */
@@ -890,10 +895,12 @@
   </a>
   <span class="nav-pill">Inbox Intelligence Hub</span>
   <div class="nav-tabs">
-    <div class="nav-tab active" data-panel="emails">Emails</div>
+    <div class="nav-tab active" data-panel="emails">Recepción</div>
     <div class="nav-tab" data-panel="folders">Carpetas</div>
-    <div class="nav-tab" data-panel="extractor">Extractor</div>
+    <div class="nav-tab" data-panel="analisis">Análisis</div>
+    <div class="nav-tab" data-panel="word">Editor Word</div>
     <div class="nav-tab" data-panel="pdfeditor">Editor PDF</div>
+    <div class="nav-tab" data-panel="extractor">Extracción</div>
   </div>
   <div class="nav-sep"></div>
   <div class="nav-live"><div class="live-dot"></div><span id="liveLbl">Conectado</span></div>
@@ -1029,6 +1036,8 @@
     </div>
 
   <div class="panel" id="panel-pdfeditor"></div>
+  <div class="panel" id="panel-word"></div>
+  <div class="panel" id="panel-analisis"></div>
 
   </main>
 </div>
@@ -1148,7 +1157,7 @@ function normalizeEmail(e) {
     // Keep a flag + the raw inline images' metadata for detection without the payload
     _hadInlineImages: /data:image\/[^;]+;base64,/.test(e.html || ''),
     attachments: e.attachments || [],            // metadata only [{filename,size,contentType}]
-    isRead:e.isRead??e.read??true,
+    isRead:(window.ReadManager ? ReadManager.isRead(String(e.uid||e.id)) : true),
     isStarred:e.isStarred||false,
     hasAttachments:e.hasAttachments||e.hasAttachment||(e.attachments?.length>0)||false,
     messageId:e.messageId||'',                   // preserve for dedup
@@ -2785,10 +2794,15 @@ function toast(msg, type='') {
 function buildSidebar() {
   const sb = $('sidebar'); sb.innerHTML = '';
   const l1 = document.createElement('div'); l1.className = 'sb-lbl'; l1.textContent = 'General'; sb.appendChild(l1);
-  sb.appendChild(mkSbItem('all', 'Todos los emails', null, S.emails.length, true));
+  const unread = ReadManager.unreadCount(S.emails);
+  sb.appendChild(mkSbItem('all', 'Todos los emails', null, S.emails.length + (unread ? ` · ${unread} sin leer` : ''), true));
   if (S.folders.length) {
     const l2 = document.createElement('div'); l2.className = 'sb-lbl'; l2.style.marginTop = '10px'; l2.textContent = 'Por remitente'; sb.appendChild(l2);
-    S.folders.forEach(f => sb.appendChild(mkSbItem(f.key, f.displayName || f.name, f.domain, f.count)));
+    /* Contadores calculados EN VIVO desde los emails visibles — nunca cacheados */
+    S.folders.forEach(f => {
+      const live = S.emails.filter(e => e.folderKey === f.key).length;
+      if (live > 0) sb.appendChild(mkSbItem(f.key, f.displayName || f.name, f.domain, live));
+    });
   }
 }
 function mkSbItem(key, name, domain, count, isAll=false) {
@@ -2918,7 +2932,7 @@ function renderList(emails) {
     // Build the card using only innerHTML (no mixed appendChild+innerHTML)
     // to avoid destroying event listeners
     const card = document.createElement('div');
-    card.className = 'ec fi' + (Selection.has(eid) ? ' checked' : '');
+    card.className = 'ec fi' + (Selection.has(eid) ? ' checked' : '') + (!e.isRead ? ' unread' : '');
     card.style.animationDelay = Math.min(i * .03, .4) + 's';
     card.dataset.eid = eid;
     card.dataset.idx = i;
@@ -3005,8 +3019,9 @@ function _trashEmails(emailsToTrash, allVisible) {
     S.emails     = TrashManager.filter(S._allEmails);
   }
   Selection.clear();  // also calls _sync → hides bulk bar
-  // Re-filter and re-render immediately
+  // Re-filter, re-render y recalcular contadores inmediatamente
   applyFilter();
+  buildSidebar();
   showTrashToast(emailsToTrash.length, () => {
     // Undo: restore all, re-add to allEmails
     if (S._allEmails) {
@@ -3038,6 +3053,14 @@ function showTrashToast(count, onUndo) {
 
 // ── Email detail — full body, attachments, selection panel, export toolbar ──
 function renderDetail(e) {
+  /* Gmail-style: abrir = leído */
+  if (e && !e.isRead) {
+    e.isRead = true;
+    ReadManager.markRead(String(e.uid||e.id));
+    const card = document.querySelector(`.ec[data-eid="${String(e.uid||e.id)}"]`);
+    if (card) { card.querySelector('.unread-pip')?.remove(); card.classList.remove('unread'); }
+    buildSidebar();
+  }
   // Background-enrich attachments with real binary data if not already done
   const hasRealAtts = (e.attachments || []).some(a => a.filename || a.name);
   const needsEnrich  = hasRealAtts && (e.attachments || []).some(a => !a.dataUrl && !a._status);
@@ -3385,6 +3408,41 @@ function renderDetail(e) {
   });
   reiWrap.appendChild(reiBtn);
   wrap.appendChild(reiWrap);
+
+  // ── TRANSFERIR + estado de lectura ──
+  const xferRow = document.createElement('div');
+  xferRow.style.cssText = 'display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center';
+  xferRow.innerHTML = `
+    <div style="position:relative" id="xferWrap">
+      <button id="xferBtn" style="padding:9px 16px;border-radius:8px;border:1px solid var(--accent);background:var(--accent);color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:6px">⇄ TRANSFERIR</button>
+      <div id="xferMenu" style="display:none;position:absolute;top:calc(100% + 4px);left:0;background:var(--bg-card,#fff);border:1px solid var(--border);border-radius:9px;box-shadow:0 8px 24px rgba(0,0,0,.14);z-index:50;min-width:220px;overflow:hidden">
+        <div class="xfer-opt" data-x="word" style="padding:10px 14px;font-size:13px;cursor:pointer;display:flex;gap:8px;align-items:center">📝 <div><b>Transferir a Editor Word</b><div style="font-size:11px;color:var(--text-3)">Documento editable con el contenido</div></div></div>
+        <div class="xfer-opt" data-x="pdf" style="padding:10px 14px;font-size:13px;cursor:pointer;display:flex;gap:8px;align-items:center;border-top:1px solid var(--border)">📄 <div><b>Transferir a Editor PDF</b><div style="font-size:11px;color:var(--text-3)">PDF anotable generado del email</div></div></div>
+      </div>
+    </div>
+    <button id="toggleReadBtn" style="padding:9px 14px;border-radius:8px;border:1px solid var(--border);background:var(--bg-card,#fff);color:var(--text-2);font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit">✉️ Marcar como no leído</button>`;
+  wrap.appendChild(xferRow);
+
+  const xferBtn = xferRow.querySelector('#xferBtn');
+  const xferMenu = xferRow.querySelector('#xferMenu');
+  xferBtn.addEventListener('click', ev => { ev.stopPropagation(); xferMenu.style.display = xferMenu.style.display==='none' ? 'block' : 'none'; });
+  document.addEventListener('click', () => { if (xferMenu) xferMenu.style.display='none'; }, { once:false });
+  xferRow.querySelectorAll('.xfer-opt').forEach(opt => {
+    opt.addEventListener('mouseenter', () => opt.style.background='var(--hover)');
+    opt.addEventListener('mouseleave', () => opt.style.background='');
+    opt.addEventListener('click', ev => {
+      ev.stopPropagation(); xferMenu.style.display='none';
+      if (opt.dataset.x === 'word') MFTransfer.toWord(e);
+      else MFTransfer.toPDF(e);
+    });
+  });
+  xferRow.querySelector('#toggleReadBtn').addEventListener('click', function() {
+    const id = String(e.uid||e.id);
+    if (e.isRead) { e.isRead=false; ReadManager.markUnread(id); this.textContent='✉️ Marcar como leído'; }
+    else { e.isRead=true; ReadManager.markRead(id); this.textContent='✉️ Marcar como no leído'; }
+    renderList(S._filtered || S.emails || []);
+    buildSidebar();
+  });
 
   // ── ASISTENTE DOCUMENTAL IA — punto de entrada principal ──
   if (window.MFAssistant) MFAssistant.inject(e, wrap);
@@ -3863,6 +3921,21 @@ function checkNewEmails(newEmails) {
 // Permanent delete removes from view permanently (IMAP delete
 // requires server-side — here we mark as permanently hidden).
 // ═══════════════════════════════════════════════════
+/* ── Sistema leído/no leído (persistente, estilo Gmail) ── */
+const ReadManager = {
+  KEY: 'mfh_read_v1',
+  _load()  { try { return new Set(JSON.parse(localStorage.getItem(this.KEY)||'[]')); } catch { return new Set(); } },
+  _save(s) { localStorage.setItem(this.KEY, JSON.stringify([...s])); },
+  seeded() { return localStorage.getItem(this.KEY) !== null; },
+  /* Primera vez: todo el buzón existente se considera leído */
+  seedIfEmpty(uids) { if (!this.seeded()) this._save(new Set(uids.map(String))); },
+  isRead(id)   { return this._load().has(String(id)); },
+  markRead(id) { const s=this._load(); s.add(String(id)); this._save(s); },
+  markUnread(id) { const s=this._load(); s.delete(String(id)); this._save(s); },
+  unreadCount(emails) { const s=this._load(); return (emails||[]).filter(e=>!s.has(String(e.uid||e.id))).length; },
+};
+window.ReadManager = ReadManager;
+
 const TrashManager = {
   KEY:        'mfh_trash_v1',
   KEY_PERM:   'mfh_perm_del_v1',
@@ -3899,16 +3972,40 @@ const TrashManager = {
     const p = this._loadP();
     if (!p.includes(String(id))) p.push(String(id));
     this._saveP(p);
+    this._syncServer([String(id)]);
     this._notifyChange();
+  },
+
+  /* Persistir borrados en servidor (Netlify Blobs) — sobrevive a cualquier dispositivo */
+  _syncServer(uids) {
+    fetch('/.netlify/functions/deleted-emails', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ uids }),
+    }).catch(()=>{});
+  },
+  async pullServer() {
+    try {
+      const r = await fetch('/.netlify/functions/deleted-emails');
+      if (!r.ok) return;
+      const data = await r.json();
+      if (Array.isArray(data.uids) && data.uids.length) {
+        const p = this._loadP();
+        let changed = false;
+        data.uids.forEach(u => { if (!p.includes(String(u))) { p.push(String(u)); changed = true; } });
+        if (changed) this._saveP(p);
+      }
+    } catch(_) {}
   },
 
   /** Empty entire trash */
   emptyTrash() {
     const d = this._load();
     const p = this._loadP();
-    Object.keys(d).forEach(id => { if (!p.includes(id)) p.push(id); });
+    const newIds = Object.keys(d).filter(id => !p.includes(id));
+    newIds.forEach(id => p.push(id));
     this._saveP(p);
     this._save({});
+    if (newIds.length) this._syncServer(newIds);
     this._notifyChange();
   },
 
@@ -3971,6 +4068,7 @@ const TrashManager = {
           document.dispatchEvent(new CustomEvent('emailsChanged'));
         });
         row.querySelectorAll('button')[1].addEventListener('click', () => {
+          if (!confirm('¿Eliminar definitivamente este email? Esta acción no se puede deshacer.')) return;
           this.permanentDelete(item.uid);
           row.remove();
           overlay.querySelector('.trash-drawer-hd span').textContent =
@@ -3989,6 +4087,7 @@ const TrashManager = {
       emptyBtn.textContent = '🗑️ Vaciar papelera (' + trashed.length + ')';
       emptyBtn.addEventListener('click', () => {
         if (confirm('¿Vaciar la papelera? Esta acción no se puede deshacer.')) {
+          if (!confirm('¿Vaciar toda la papelera definitivamente? Esta acción no se puede deshacer.')) return;
           this.emptyTrash();
           overlay.remove();
           document.dispatchEvent(new CustomEvent('emailsChanged'));
@@ -4077,6 +4176,9 @@ async function loadEmails() {
     const emails = raw.map(normalizeEmail);
     emails.sort((a,b) => new Date(b.date||0) - new Date(a.date||0));
     checkNewEmails(emails);
+    await TrashManager.pullServer();
+    ReadManager.seedIfEmpty(emails.map(e=>String(e.uid||e.id)));
+    emails.forEach(e => { e.isRead = ReadManager.isRead(String(e.uid||e.id)); });
     S.emails = TrashManager.filter(emails);
     S._allEmails = emails;  // keep unfiltered for trash restore
     S.lastCount = emails.length;
@@ -4164,9 +4266,9 @@ const bulkReadBtn = $('bulkReadBtn');
 if (bulkReadBtn) {
   bulkReadBtn.addEventListener('click', () => {
     const selected = Selection.getEmails(S._filtered || S.emails || []);
-    selected.forEach(e => { e.isRead = true; });
-    // Re-render to show updated state
+    selected.forEach(e => { e.isRead = true; ReadManager.markRead(String(e.uid||e.id)); });
     renderList(S._filtered || S.emails || []);
+    buildSidebar();
     Selection.clear();
     toast(selected.length + ' correo(s) marcados como leídos');
   });
@@ -6521,6 +6623,336 @@ No incluyas explicaciones, solo el documento.`;
 })();
 </script>
 
+
+<!-- ═══ MovFlow · Editor Word + Análisis + Transfer ═══ -->
+<script>
+(function () {
+  'use strict';
+  if (window.__MF_WORD__) return;
+  window.__MF_WORD__ = true;
+
+  const $id = id => document.getElementById(id);
+  const esc = s => String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+  /* ══════════ CSS ══════════ */
+  const CSS = `
+  #panel-word.active{display:flex!important;flex-direction:column;height:calc(100vh - 52px);overflow:hidden;background:#e8eaed}
+  .wd-tb{background:#fff;border-bottom:1px solid #e5e7eb;padding:7px 12px;display:flex;align-items:center;gap:5px;flex-wrap:wrap;flex-shrink:0;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+  .wd-g{display:flex;align-items:center;gap:4px;flex-shrink:0}
+  .wd-sep{width:1px;height:22px;background:#e5e7eb;margin:0 4px}
+  .wd-btn{padding:5px 10px;border:1px solid #e5e7eb;border-radius:7px;font-size:12px;cursor:pointer;background:#fff;color:#374151;font-family:inherit;transition:all .12s;white-space:nowrap}
+  .wd-btn:hover{background:#f9fafb}
+  .wd-btn.active{background:#3b82f6;color:#fff;border-color:#3b82f6}
+  .wd-btn.success{background:#059669;color:#fff;border-color:#059669}
+  .wd-btn.b{font-weight:800}.wd-btn.i{font-style:italic}.wd-btn.u{text-decoration:underline}
+  .wd-sel{padding:5px 8px;border:1px solid #e5e7eb;border-radius:7px;font-size:12px;font-family:inherit;background:#fff;cursor:pointer}
+  .wd-name{padding:5px 10px;border:1px solid transparent;border-radius:7px;font-size:13px;font-weight:700;font-family:inherit;background:transparent;min-width:140px;max-width:260px}
+  .wd-name:focus{outline:none;border-color:#3b82f6;background:#fff}
+  .wd-layout{display:flex;flex:1;overflow:hidden;min-height:0}
+  .wd-docs{width:190px;min-width:190px;background:#fff;border-right:1px solid #e5e7eb;overflow-y:auto;padding:10px;flex-shrink:0}
+  .wd-docs-t{font-size:10px;font-weight:800;color:#9ca3af;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px}
+  .wd-doc{padding:8px 10px;border-radius:8px;cursor:pointer;font-size:12.5px;color:#374151;margin-bottom:3px;display:flex;justify-content:space-between;align-items:center;gap:4px;transition:background .12s}
+  .wd-doc:hover{background:#f3f4f6}
+  .wd-doc.active{background:#eff6ff;color:#1d4ed8;font-weight:700}
+  .wd-doc-x{color:#9ca3af;font-size:11px;background:none;border:none;cursor:pointer;padding:2px;display:none}
+  .wd-doc:hover .wd-doc-x{display:block}
+  .wd-cv{flex:1;overflow:auto;padding:24px;display:flex;justify-content:center;background:#e8eaed}
+  .wd-page{background:#fff;width:min(760px,100%);min-height:900px;box-shadow:0 6px 28px rgba(0,0,0,.16);border-radius:2px;padding:60px 70px;box-sizing:border-box;outline:none;font-family:Georgia,'Times New Roman',serif;font-size:14.5px;line-height:1.75;color:#1f2937}
+  .wd-page:focus{outline:none}
+  .wd-page h1{font-size:24px;margin:.6em 0 .4em}.wd-page h2{font-size:19px;margin:.6em 0 .35em}
+  .wd-page ul,.wd-page ol{padding-left:26px}
+  .wd-page p{margin:.4em 0}
+  .wd-status{background:#fff;border-top:1px solid #e5e7eb;padding:4px 14px;font-size:11px;color:#9ca3af;flex-shrink:0}
+  @media(max-width:700px){.wd-docs{width:120px;min-width:120px}.wd-page{padding:30px 24px}.wd-cv{padding:10px}}`;
+  (function(){ const st=document.createElement('style'); st.textContent=CSS; document.head.appendChild(st); })();
+
+  /* ══════════ Persistencia ══════════ */
+  const WDocs = {
+    KEY:'mfh_word_docs_v1',
+    _load(){ try{return JSON.parse(localStorage.getItem(this.KEY)||'[]');}catch{return [];} },
+    _save(a){ try{localStorage.setItem(this.KEY,JSON.stringify(a));}catch{ alert('Sin espacio de almacenamiento. Elimina documentos antiguos.'); } },
+    list(){ return this._load(); },
+    get(id){ return this._load().find(d=>d.id===id)||null; },
+    save(id,name,html){
+      const a=this._load(); const i=a.findIndex(d=>d.id===id);
+      const doc={ id:id||'wd'+Date.now().toString(36), name:name||'Documento sin título', html, updatedAt:new Date().toISOString() };
+      if(i>=0)a[i]=doc; else a.unshift(doc);
+      this._save(a); return doc;
+    },
+    remove(id){ this._save(this._load().filter(d=>d.id!==id)); },
+  };
+
+  const W = { docId:null, dirty:false };
+
+  /* ══════════ UI ══════════ */
+  function mount() {
+    const p = $id('panel-word');
+    if (!p || p.dataset.mounted) return;
+    p.dataset.mounted='1';
+    p.innerHTML = `
+    <div class="wd-tb">
+      <div class="wd-g">
+        <button class="wd-btn" id="wdNew">🗋 Nuevo</button>
+        <button class="wd-btn" id="wdOpen">📂 Abrir .docx</button>
+        <input type="file" id="wdFile" accept=".docx" style="display:none">
+        <input class="wd-name" id="wdName" value="Documento sin título" spellcheck="false">
+      </div>
+      <div class="wd-sep"></div>
+      <div class="wd-g">
+        <select class="wd-sel" id="wdBlock">
+          <option value="p">Párrafo</option><option value="h1">Título 1</option>
+          <option value="h2">Título 2</option><option value="h3">Título 3</option>
+        </select>
+        <select class="wd-sel" id="wdSize">
+          <option value="2">Pequeño</option><option value="3" selected>Normal</option>
+          <option value="4">Grande</option><option value="5">Muy grande</option>
+        </select>
+      </div>
+      <div class="wd-sep"></div>
+      <div class="wd-g">
+        <button class="wd-btn b" data-cmd="bold">B</button>
+        <button class="wd-btn i" data-cmd="italic">I</button>
+        <button class="wd-btn u" data-cmd="underline">U</button>
+        <input type="color" id="wdColor" value="#1f2937" style="width:26px;height:26px;border:1px solid #e5e7eb;border-radius:6px;cursor:pointer;padding:1px;background:#fff" title="Color de texto">
+      </div>
+      <div class="wd-sep"></div>
+      <div class="wd-g">
+        <button class="wd-btn" data-cmd="insertUnorderedList">• Lista</button>
+        <button class="wd-btn" data-cmd="insertOrderedList">1. Lista</button>
+        <button class="wd-btn" data-cmd="justifyLeft">⇤</button>
+        <button class="wd-btn" data-cmd="justifyCenter">⇹</button>
+        <button class="wd-btn" data-cmd="justifyRight">⇥</button>
+      </div>
+      <div class="wd-sep"></div>
+      <div class="wd-g">
+        <button class="wd-btn" id="wdSave">💾 Guardar</button>
+        <button class="wd-btn success" id="wdPdf">📄 Exportar PDF</button>
+      </div>
+    </div>
+    <div class="wd-layout">
+      <div class="wd-docs">
+        <div class="wd-docs-t">Mis documentos</div>
+        <div id="wdDocList"></div>
+      </div>
+      <div class="wd-cv"><div class="wd-page" id="wdPage" contenteditable="true" spellcheck="true"><p>Escribe aquí tu documento…</p></div></div>
+    </div>
+    <div class="wd-status"><span id="wdSt">Nuevo documento</span></div>`;
+    wire();
+    renderDocList();
+  }
+
+  function wire() {
+    document.querySelectorAll('#panel-word [data-cmd]').forEach(b => {
+      b.addEventListener('mousedown', e => e.preventDefault()); /* mantener selección */
+      b.addEventListener('click', () => { document.execCommand(b.dataset.cmd, false, null); $id('wdPage').focus(); });
+    });
+    $id('wdBlock').addEventListener('change', function(){ document.execCommand('formatBlock', false, this.value); $id('wdPage').focus(); });
+    $id('wdSize').addEventListener('change', function(){ document.execCommand('fontSize', false, this.value); $id('wdPage').focus(); });
+    $id('wdColor').addEventListener('input', function(){ document.execCommand('foreColor', false, this.value); });
+    $id('wdNew').addEventListener('click', newDoc);
+    $id('wdOpen').addEventListener('click', () => $id('wdFile').click());
+    $id('wdFile').addEventListener('change', e => { if(e.target.files[0]) openDocx(e.target.files[0]); e.target.value=''; });
+    $id('wdSave').addEventListener('click', saveDoc);
+    $id('wdPdf').addEventListener('click', exportPdf);
+    $id('wdPage').addEventListener('input', () => { W.dirty=true; $id('wdSt').textContent='Cambios sin guardar'; });
+    /* Autoguardado cada 30s si hay cambios */
+    setInterval(() => { if (W.dirty && W.docId) saveDoc(true); }, 30000);
+  }
+
+  function newDoc() {
+    if (W.dirty && !confirm('Hay cambios sin guardar. ¿Crear documento nuevo?')) return;
+    W.docId=null; W.dirty=false;
+    $id('wdName').value='Documento sin título';
+    $id('wdPage').innerHTML='<p>Escribe aquí tu documento…</p>';
+    $id('wdSt').textContent='Nuevo documento';
+    renderDocList();
+  }
+
+  function saveDoc(silent) {
+    const doc = WDocs.save(W.docId, $id('wdName').value.trim(), $id('wdPage').innerHTML);
+    W.docId = doc.id; W.dirty=false;
+    $id('wdSt').textContent = 'Guardado · '+new Date().toLocaleTimeString('es-ES');
+    renderDocList();
+    if (!silent && typeof toast==='function') toast('💾 Documento guardado.');
+  }
+
+  function loadDoc(id) {
+    if (W.dirty && !confirm('Hay cambios sin guardar. ¿Continuar?')) return;
+    const d = WDocs.get(id); if(!d) return;
+    W.docId=d.id; W.dirty=false;
+    $id('wdName').value=d.name;
+    $id('wdPage').innerHTML=d.html;
+    $id('wdSt').textContent='Abierto · '+d.name;
+    renderDocList();
+  }
+
+  function renderDocList() {
+    const l=$id('wdDocList'); if(!l) return;
+    const docs=WDocs.list();
+    l.innerHTML = docs.length ? '' : '<div style="font-size:11.5px;color:#c4c8cf">Sin documentos guardados</div>';
+    docs.forEach(d => {
+      const el=document.createElement('div');
+      el.className='wd-doc'+(d.id===W.docId?' active':'');
+      el.innerHTML=`<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.name)}</span><button class="wd-doc-x" title="Eliminar">🗑</button>`;
+      el.addEventListener('click', e => { if(!e.target.classList.contains('wd-doc-x')) loadDoc(d.id); });
+      el.querySelector('.wd-doc-x').addEventListener('click', e => {
+        e.stopPropagation();
+        if (!confirm(`¿Eliminar "${d.name}"?`)) return;
+        WDocs.remove(d.id);
+        if (W.docId===d.id) newDoc();
+        renderDocList();
+      });
+      l.appendChild(el);
+    });
+  }
+
+  async function openDocx(file) {
+    $id('wdSt').textContent='Importando .docx…';
+    try {
+      if (!window.mammoth) {
+        await new Promise((res,rej)=>{ const s=document.createElement('script');
+          s.src='https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.8.0/mammoth.browser.min.js';
+          s.onload=res; s.onerror=rej; document.head.appendChild(s); });
+      }
+      const buf = await file.arrayBuffer();
+      const result = await window.mammoth.convertToHtml({ arrayBuffer: buf });
+      W.docId=null; W.dirty=true;
+      $id('wdName').value=file.name.replace(/\.docx$/i,'');
+      $id('wdPage').innerHTML=result.value || '<p></p>';
+      $id('wdSt').textContent='Importado — sin guardar';
+    } catch(e) { alert('Error importando .docx: '+e.message); $id('wdSt').textContent='Error al importar'; }
+  }
+
+  function exportPdf() {
+    const name=$id('wdName').value.trim()||'documento';
+    const w=window.open('','_blank','width=820,height=980');
+    w.document.write(`<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><title>${esc(name)}</title><style>
+      body{font-family:Georgia,'Times New Roman',serif;font-size:12.5pt;line-height:1.7;color:#111;max-width:720px;margin:0 auto;padding:40px 50px}
+      h1{font-size:20pt}h2{font-size:16pt}ul,ol{padding-left:24px}
+      @page{margin:2.2cm}@media print{body{padding:0}}
+    </style></head><body>${$id('wdPage').innerHTML}<script>window.onload=()=>window.print();<\/script></body></html>`);
+    w.document.close();
+  }
+
+  /* API para Transferir */
+  function openWithContent(html, title) {
+    const tab=document.querySelector('[data-panel="word"]');
+    if(tab)tab.click();
+    setTimeout(()=>{
+      mount();
+      W.docId=null; W.dirty=true;
+      $id('wdName').value=title||'Transferido desde email';
+      $id('wdPage').innerHTML=html;
+      $id('wdSt').textContent='Transferido — sin guardar';
+      renderDocList();
+    },80);
+  }
+
+  /* ══════════ PANEL ANÁLISIS: biblioteca de modelos ══════════ */
+  function mountAnalisis() {
+    const p=$id('panel-analisis');
+    if(!p||p.dataset.mounted)return;
+    p.dataset.mounted='1';
+    render();
+    function render() {
+      const models=(window.MFDocModels?MFDocModels.list():[]);
+      let h=`<div style="padding:24px;max-width:920px">
+        <h2 style="font-size:17px;font-weight:800;color:var(--text);margin-bottom:4px">🧠 Análisis IA</h2>
+        <p style="font-size:13px;color:var(--text-3);margin-bottom:18px">El análisis inteligente se ejecuta desde cada email con el botón <b>"📊 Análisis de Datos IA"</b>. Aquí gestionas la biblioteca de modelos documentales que la IA usa como referencia.</p>
+        <h3 style="font-size:13px;font-weight:800;color:var(--text-2);margin-bottom:10px">📚 Biblioteca de modelos documentales (${models.length})</h3>`;
+      if(!models.length) h+='<div style="font-size:13px;color:var(--text-3);padding:24px;text-align:center;background:var(--hover);border-radius:10px">Sin modelos guardados. Usa "💾 Guardar como modelo documental" en el análisis de un email.</div>';
+      else {
+        h+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px">';
+        models.forEach(m=>{
+          h+=`<div style="background:var(--bg-card,#fff);border:1px solid var(--border);border-radius:10px;padding:14px">
+            <div style="font-size:13px;font-weight:700;color:var(--text)">${esc(m.name)}</div>
+            <div style="font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:.04em;margin:3px 0 8px">${esc(m.category)}</div>
+            <div style="font-size:12px;color:var(--text-2);line-height:1.5;margin-bottom:10px">${esc((m.description||'').slice(0,110))}</div>
+            <button data-del="${m.id}" style="padding:5px 10px;border-radius:6px;border:1px solid #fca5a5;color:#dc2626;background:transparent;font-size:11.5px;cursor:pointer;font-family:inherit">🗑 Eliminar</button>
+          </div>`;
+        });
+        h+='</div>';
+      }
+      h+='</div>';
+      p.innerHTML=h;
+      p.querySelectorAll('[data-del]').forEach(b=>b.addEventListener('click',()=>{
+        if(!confirm('¿Eliminar este modelo de la biblioteca?'))return;
+        MFDocModels.remove(b.dataset.del);
+        p.dataset.mounted=''; delete p.dataset.mounted; mountAnalisis();
+      }));
+    }
+  }
+
+  /* ══════════ MFTransfer ══════════ */
+  const MFTransfer = {
+    _emailHtml(e) {
+      const body=(e.body||e.snippet||'').split('\n').map(l=>`<p>${esc(l)||'&nbsp;'}</p>`).join('');
+      return `<h1>${esc(e.subject||'Sin asunto')}</h1>
+        <p><b>De:</b> ${esc(e.fromName||e.fromEmail||'')} &lt;${esc(e.fromEmail||'')}&gt;<br>
+        <b>Fecha:</b> ${esc(e.date||'')}</p><hr>${body}`;
+    },
+    toWord(e) {
+      openWithContent(this._emailHtml(e), 'Email — '+(e.subject||'sin asunto').slice(0,50));
+      if(typeof toast==='function')toast('📝 Email transferido al Editor Word.');
+    },
+    async toPDF(e) {
+      if(typeof toast==='function')toast('⏳ Generando PDF del email…');
+      try {
+        if (!window.PDFLib) {
+          await new Promise((res,rej)=>{ const s=document.createElement('script');
+            s.src='https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js';
+            s.onload=res; s.onerror=rej; document.head.appendChild(s); });
+        }
+        const PL=window.PDFLib;
+        const doc=await PL.PDFDocument.create();
+        const font=await doc.embedFont(PL.StandardFonts.Helvetica);
+        const bold=await doc.embedFont(PL.StandardFonts.HelveticaBold);
+        const W_=595, H_=842, M=56, LH=15.5, SZ=10.5;
+        let page=doc.addPage([W_,H_]), y=H_-M;
+        const clean=t=>String(t||'').replace(/[^\x20-\x7E\xA0-\xFF\u20AC€áéíóúñÁÉÍÓÚÑüÜ¿¡]/g,' ');
+        const write=(t,f,s)=>{
+          const words=clean(t).split(/\s+/); let line='';
+          const maxW=W_-M*2;
+          const flush=()=>{ if(!line)return; if(y<M+20){page=doc.addPage([W_,H_]);y=H_-M;}
+            page.drawText(line,{x:M,y,size:s,font:f,color:PL.rgb(.12,.12,.15)}); y-=LH; line=''; };
+          words.forEach(w=>{
+            const test=line?line+' '+w:w;
+            if(f.widthOfTextAtSize(test,s)>maxW)flush(),line=w; else line=test;
+          });
+          flush();
+        };
+        write(e.subject||'Sin asunto',bold,15); y-=6;
+        write('De: '+(e.fromName||'')+' <'+(e.fromEmail||'')+'>',font,SZ);
+        write('Fecha: '+(e.date||''),font,SZ); y-=10;
+        page.drawLine({start:{x:M,y},end:{x:W_-M,y},thickness:.7,color:PL.rgb(.8,.8,.82)}); y-=16;
+        (e.body||e.snippet||'').split('\n').forEach(l=>{ if(!l.trim()){y-=LH*0.6;return;} write(l,font,SZ); });
+        const bytes=await doc.save();
+        let bin=''; const u8=new Uint8Array(bytes);
+        for(let i=0;i<u8.length;i+=8192) bin+=String.fromCharCode.apply(null,u8.subarray(i,i+8192));
+        const dataUrl='data:application/pdf;base64,'+btoa(bin);
+        if(window.MFPdfEditor&&MFPdfEditor.openFromDataUrl)
+          await MFPdfEditor.openFromDataUrl(dataUrl,'email_'+(e.uid||Date.now())+'.pdf');
+      } catch(err){ alert('Error al generar PDF: '+err.message); }
+    },
+  };
+  window.MFTransfer=MFTransfer;
+  window.MFWordEditor={ openWithContent };
+
+  /* Boot: montar al activar tab */
+  function watch() {
+    const obs=new MutationObserver(()=>{
+      const pw=$id('panel-word');
+      if(pw&&pw.classList.contains('active')&&!pw.dataset.mounted)mount();
+      const pa=$id('panel-analisis');
+      if(pa&&pa.classList.contains('active')&&!pa.dataset.mounted)mountAnalisis();
+    });
+    const main=document.querySelector('main')||document.querySelector('.main');
+    if(main)obs.observe(main,{subtree:true,attributes:true,attributeFilter:['class']});
+  }
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',watch);
+  else watch();
+})();
+</script>
 
 <!-- ═══ MovFlow Pipeline v2 · Gestor de Plantillas ═══ -->
 <script>
