@@ -900,6 +900,7 @@
     <div class="nav-tab" data-panel="analisis">Análisis</div>
     <div class="nav-tab" data-panel="word">Editor Word</div>
     <div class="nav-tab" data-panel="pdfeditor">Editor PDF</div>
+    <div class="nav-tab" data-panel="imagen">Editor Imagen</div>
     <div class="nav-tab" data-panel="extractor">Extracción</div>
   </div>
   <div class="nav-sep"></div>
@@ -1038,6 +1039,7 @@
   <div class="panel" id="panel-pdfeditor"></div>
   <div class="panel" id="panel-word"></div>
   <div class="panel" id="panel-analisis"></div>
+  <div class="panel" id="panel-imagen"></div>
 
   </main>
 </div>
@@ -7518,6 +7520,371 @@ Firma: ____________________
   else watch();
 })();
 </script>
+
+<!-- ═══ MovFlow · Editor de Imágenes ═══ -->
+<script>
+(function(){
+  'use strict';
+  if (window.__MF_IMG__) return;
+  window.__MF_IMG__ = true;
+
+  const $id = id => document.getElementById(id);
+  const esc = s => String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+  const CSS = `
+  #panel-imagen.active{display:flex!important;flex-direction:column;height:calc(100vh - 52px);overflow:hidden;background:#e8eaed}
+  .im-dz{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:#6b7280;border:2px dashed #d1d5db;border-radius:14px;margin:24px;cursor:pointer;transition:all .2s;background:#fff}
+  .im-dz:hover,.im-dz.over{border-color:#3b82f6;color:#3b82f6;background:#eff6ff}
+  .im-dz-ico{font-size:54px}.im-dz-t{font-weight:800;font-size:19px;color:#1f2937}
+  .im-dz-sub{font-size:13px;color:#9ca3af}
+  .im-dz-btn{padding:11px 26px;background:#3b82f6;color:#fff;border:none;border-radius:9px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 8px rgba(59,130,246,.3)}
+  .im-dz-btn:hover{filter:brightness(1.08)}
+  .im-tb{background:#fff;border-bottom:1px solid #e5e7eb;padding:6px 12px;display:flex;align-items:center;gap:5px;flex-wrap:wrap;flex-shrink:0;box-shadow:0 1px 3px rgba(0,0,0,.05);min-height:42px}
+  .im-g{display:flex;align-items:center;gap:4px;flex-shrink:0}
+  .im-sep{width:1px;height:22px;background:#e5e7eb;margin:0 4px;flex-shrink:0}
+  .im-btn{padding:5px 10px;border:1px solid #e5e7eb;border-radius:7px;font-size:12px;cursor:pointer;background:#fff;color:#374151;font-family:inherit;transition:all .12s;white-space:nowrap;display:inline-flex;align-items:center;gap:4px}
+  .im-btn:hover{background:#f9fafb;border-color:#d1d5db}
+  .im-btn.active{background:#3b82f6;color:#fff;border-color:#3b82f6}
+  .im-btn.success{background:#059669;color:#fff;border-color:#059669}
+  .im-btn.danger{color:#dc2626;border-color:#fca5a5}
+  .im-lbl{font-size:10px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.05em;padding:0 3px}
+  .im-layout{display:flex;flex:1;overflow:hidden;min-height:0}
+  .im-cv-wrap{flex:1;overflow:auto;display:flex;align-items:center;justify-content:center;padding:22px;background:#e8eaed;min-height:0}
+  .im-canvas{box-shadow:0 6px 28px rgba(0,0,0,.2);background:#fff;max-width:100%;max-height:100%;background-image:linear-gradient(45deg,#f0f0f0 25%,transparent 25%),linear-gradient(-45deg,#f0f0f0 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#f0f0f0 75%),linear-gradient(-45deg,transparent 75%,#f0f0f0 75%);background-size:20px 20px;background-position:0 0,0 10px,10px -10px,-10px 0}
+  .im-side{width:230px;min-width:230px;background:#fff;border-left:1px solid #e5e7eb;overflow-y:auto;flex-shrink:0;padding:14px}
+  .im-sec{margin-bottom:18px}
+  .im-sec-t{font-size:10px;font-weight:800;color:#9ca3af;text-transform:uppercase;letter-spacing:.06em;margin-bottom:9px}
+  .im-row{display:flex;align-items:center;gap:8px;margin-bottom:9px}
+  .im-row label{font-size:11.5px;color:#6b7280;min-width:64px;font-weight:600}
+  .im-row input[type=range]{flex:1;accent-color:#3b82f6}
+  .im-row .val{font-size:11px;color:#6b7280;min-width:34px;text-align:right;font-weight:600}
+  .im-row input[type=number]{width:60px;padding:5px 7px;border:1px solid #e5e7eb;border-radius:6px;font-size:12px;font-family:inherit}
+  .im-row input[type=color]{width:32px;height:26px;border:1px solid #e5e7eb;border-radius:6px;cursor:pointer;padding:1px;background:#fff}
+  .im-full{width:100%;padding:8px;border-radius:7px;border:1px solid #e5e7eb;background:#fff;color:#374151;font-size:12.5px;cursor:pointer;font-family:inherit;margin-bottom:6px}
+  .im-full:hover{background:#f9fafb}
+  .im-full.primary{background:#3b82f6;color:#fff;border-color:#3b82f6}
+  .im-status{background:#fff;border-top:1px solid #e5e7eb;padding:4px 14px;font-size:11px;color:#9ca3af;flex-shrink:0}
+  @media(max-width:760px){.im-side{width:170px;min-width:170px}.im-cv-wrap{padding:10px}}`;
+  (function(){ if(document.getElementById('im-css'))return; const st=document.createElement('style'); st.id='im-css'; st.textContent=CSS; document.head.appendChild(st); })();
+
+  const S = {
+    img:null, canvas:null, ctx:null,
+    fileName:'imagen.png',
+    baseW:0, baseH:0,
+    rotation:0, flipH:false, flipV:false,
+    filters:{ brightness:100, contrast:100, saturate:100, blur:0, grayscale:0 },
+    tool:'move',
+    drawColor:'#e11d48', drawSize:4,
+    textColor:'#111827', textSize:32,
+    objects:[],   // texto y dibujos añadidos
+    drawing:false, lastPt:null,
+    crop:null,
+  };
+
+  function mount() {
+    const p = $id('panel-imagen');
+    if (!p || p.dataset.mounted) return;
+    p.dataset.mounted='1';
+    showDropZone();
+  }
+
+  function showDropZone() {
+    const p = $id('panel-imagen');
+    if(!p) return;
+    p.innerHTML = `<div class="im-dz" id="imDZ">
+      <div class="im-dz-ico">🖼️</div>
+      <div class="im-dz-t">Editor de Imágenes</div>
+      <div class="im-dz-sub">Arrastra una imagen (JPG, PNG, WEBP, GIF, SVG) o haz clic</div>
+      <button class="im-dz-btn" id="imPick">Abrir imagen</button>
+      <input type="file" id="imFile" accept="image/*" style="display:none">
+    </div>`;
+    const dz=$id('imDZ'), inp=$id('imFile');
+    dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('over');});
+    dz.addEventListener('dragleave',()=>dz.classList.remove('over'));
+    dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('over');if(e.dataTransfer.files[0])loadImage(e.dataTransfer.files[0]);});
+    dz.addEventListener('click',e=>{if(e.target.id!=='imPick'&&e.target!==inp)inp.click();});
+    $id('imPick').addEventListener('click',e=>{e.stopPropagation();inp.click();});
+    inp.addEventListener('change',e=>{if(e.target.files[0])loadImage(e.target.files[0]);});
+  }
+
+  function loadImage(file) {
+    if (!file || !file.type.startsWith('image/')) { alert('Selecciona una imagen válida.'); return; }
+    S.fileName = file.name;
+    const rd = new FileReader();
+    rd.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        S.img = img;
+        S.baseW = img.naturalWidth; S.baseH = img.naturalHeight;
+        S.rotation=0; S.flipH=false; S.flipV=false;
+        S.filters={ brightness:100, contrast:100, saturate:100, blur:0, grayscale:0 };
+        S.objects=[]; S.crop=null; S.tool='move';
+        buildUI();
+      };
+      img.onerror = () => alert('No se pudo cargar la imagen.');
+      img.src = rd.result;
+    };
+    rd.readAsDataURL(file);
+  }
+
+  /* Abrir desde otros módulos (email, PDF) */
+  function openFromDataUrl(dataUrl, fileName) {
+    const tab=document.querySelector('[data-panel="imagen"]');
+    if(tab)tab.click();
+    setTimeout(()=>{
+      mount();
+      S.fileName = fileName||'imagen.png';
+      const img=new Image();
+      img.onload=()=>{ S.img=img; S.baseW=img.naturalWidth; S.baseH=img.naturalHeight;
+        S.rotation=0;S.flipH=false;S.flipV=false;
+        S.filters={brightness:100,contrast:100,saturate:100,blur:0,grayscale:0};
+        S.objects=[];S.crop=null;S.tool='move'; buildUI(); };
+      img.src=dataUrl;
+    },80);
+  }
+
+  function buildUI() {
+    const p = $id('panel-imagen');
+    p.innerHTML = `
+    <div class="im-tb">
+      <div class="im-g">
+        <button class="im-btn" id="imOpen">📂 Abrir</button>
+        <input type="file" id="imFile2" accept="image/*" style="display:none">
+        <button class="im-btn" id="imNew">🗋 Nuevo</button>
+      </div>
+      <div class="im-sep"></div>
+      <span class="im-lbl">Herramienta</span>
+      <div class="im-g">
+        <button class="im-btn active" data-tool="move" title="Mover / ninguna">🖱</button>
+        <button class="im-btn" data-tool="crop" title="Recortar">✂️ Recortar</button>
+        <button class="im-btn" data-tool="draw" title="Dibujar">✏️ Dibujar</button>
+        <button class="im-btn" data-tool="text" title="Añadir texto">T Texto</button>
+      </div>
+      <div class="im-sep"></div>
+      <span class="im-lbl">Transformar</span>
+      <div class="im-g">
+        <button class="im-btn" id="imRotL" title="Rotar izquierda">↺</button>
+        <button class="im-btn" id="imRotR" title="Rotar derecha">↻</button>
+        <button class="im-btn" id="imFlipH" title="Voltear horizontal">⇋</button>
+        <button class="im-btn" id="imFlipV" title="Voltear vertical">⇅</button>
+      </div>
+      <div class="im-sep"></div>
+      <div class="im-g">
+        <button class="im-btn" id="imReset" title="Restablecer ajustes">↩ Reset</button>
+        <select class="im-btn" id="imFormat" title="Formato de exportación">
+          <option value="image/png">PNG</option>
+          <option value="image/jpeg">JPG</option>
+          <option value="image/webp">WEBP</option>
+        </select>
+        <button class="im-btn success" id="imExport">⬇ Exportar</button>
+      </div>
+    </div>
+    <div class="im-layout">
+      <div class="im-cv-wrap" id="imCvWrap">
+        <canvas class="im-canvas" id="imCanvas"></canvas>
+      </div>
+      <div class="im-side">
+        <div class="im-sec">
+          <div class="im-sec-t">Tamaño</div>
+          <div class="im-row"><label>Ancho</label><input type="number" id="imW" value="${S.baseW}"><span style="font-size:11px;color:#9ca3af">px</span></div>
+          <div class="im-row"><label>Alto</label><input type="number" id="imH" value="${S.baseH}"><span style="font-size:11px;color:#9ca3af">px</span></div>
+          <label style="font-size:11px;color:#6b7280;display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" id="imRatio" checked> Mantener proporción</label>
+          <button class="im-full" id="imApplyResize" style="margin-top:8px">Aplicar tamaño</button>
+        </div>
+        <div class="im-sec">
+          <div class="im-sec-t">Ajustes</div>
+          <div class="im-row"><label>Brillo</label><input type="range" id="imBright" min="0" max="200" value="${S.filters.brightness}"><span class="val" id="imBrightV">${S.filters.brightness}%</span></div>
+          <div class="im-row"><label>Contraste</label><input type="range" id="imContrast" min="0" max="200" value="${S.filters.contrast}"><span class="val" id="imContrastV">${S.filters.contrast}%</span></div>
+          <div class="im-row"><label>Saturación</label><input type="range" id="imSat" min="0" max="200" value="${S.filters.saturate}"><span class="val" id="imSatV">${S.filters.saturate}%</span></div>
+          <div class="im-row"><label>Desenfoque</label><input type="range" id="imBlur" min="0" max="10" value="${S.filters.blur}"><span class="val" id="imBlurV">${S.filters.blur}</span></div>
+          <div class="im-row"><label>B/N</label><input type="range" id="imGray" min="0" max="100" value="${S.filters.grayscale}"><span class="val" id="imGrayV">${S.filters.grayscale}%</span></div>
+        </div>
+        <div class="im-sec" id="imDrawSec" style="display:none">
+          <div class="im-sec-t">Pincel</div>
+          <div class="im-row"><label>Color</label><input type="color" id="imDrawColor" value="${S.drawColor}"></div>
+          <div class="im-row"><label>Grosor</label><input type="range" id="imDrawSize" min="1" max="40" value="${S.drawSize}"><span class="val" id="imDrawSizeV">${S.drawSize}</span></div>
+        </div>
+        <div class="im-sec" id="imTextSec" style="display:none">
+          <div class="im-sec-t">Texto</div>
+          <div class="im-row"><label>Color</label><input type="color" id="imTextColor" value="${S.textColor}"></div>
+          <div class="im-row"><label>Tamaño</label><input type="range" id="imTextSize" min="10" max="120" value="${S.textSize}"><span class="val" id="imTextSizeV">${S.textSize}</span></div>
+          <div style="font-size:10.5px;color:#9ca3af;line-height:1.4">Haz clic en la imagen para colocar el texto.</div>
+        </div>
+      </div>
+    </div>
+    <div class="im-status"><span id="imSt">${esc(S.fileName)} · ${S.baseW}×${S.baseH}px</span></div>`;
+    S.canvas = $id('imCanvas');
+    S.ctx = S.canvas.getContext('2d');
+    wire();
+    render();
+  }
+
+  /* Dibuja la imagen con transformaciones + filtros + objetos */
+  function render() {
+    if (!S.img) return;
+    const rot = S.rotation % 360;
+    const swap = (rot===90||rot===270);
+    const w = swap ? S.baseH : S.baseW;
+    const h = swap ? S.baseW : S.baseH;
+    S.canvas.width = w; S.canvas.height = h;
+    const ctx = S.ctx;
+    ctx.clearRect(0,0,w,h);
+    ctx.save();
+    ctx.filter = `brightness(${S.filters.brightness}%) contrast(${S.filters.contrast}%) saturate(${S.filters.saturate}%) blur(${S.filters.blur}px) grayscale(${S.filters.grayscale}%)`;
+    ctx.translate(w/2, h/2);
+    ctx.rotate(rot * Math.PI/180);
+    ctx.scale(S.flipH?-1:1, S.flipV?-1:1);
+    ctx.drawImage(S.img, -S.baseW/2, -S.baseH/2, S.baseW, S.baseH);
+    ctx.restore();
+    /* Objetos (dibujos y textos) en coordenadas del canvas actual */
+    ctx.filter = 'none';
+    S.objects.forEach(o => {
+      if (o.type==='path') {
+        ctx.strokeStyle=o.color; ctx.lineWidth=o.size; ctx.lineCap='round'; ctx.lineJoin='round';
+        ctx.beginPath();
+        o.points.forEach((pt,i)=>{ i?ctx.lineTo(pt.x,pt.y):ctx.moveTo(pt.x,pt.y); });
+        ctx.stroke();
+      } else if (o.type==='text') {
+        ctx.fillStyle=o.color; ctx.font=`${o.size}px Arial, sans-serif`; ctx.textBaseline='top';
+        ctx.fillText(o.text, o.x, o.y);
+      }
+    });
+    const st=$id('imSt'); if(st) st.textContent=`${S.fileName} · ${w}×${h}px${S.objects.length?' · '+S.objects.length+' elemento(s)':''}`;
+  }
+
+  function setTool(t) {
+    S.tool=t;
+    document.querySelectorAll('#panel-imagen [data-tool]').forEach(b=>b.classList.toggle('active',b.dataset.tool===t));
+    $id('imDrawSec').style.display = t==='draw'?'block':'none';
+    $id('imTextSec').style.display = t==='text'?'block':'none';
+    S.canvas.style.cursor = t==='draw'?'crosshair':t==='text'?'text':t==='crop'?'crosshair':'default';
+  }
+
+  function canvasPt(e) {
+    const r=S.canvas.getBoundingClientRect();
+    const sx=S.canvas.width/r.width, sy=S.canvas.height/r.height;
+    const src=e.touches?e.touches[0]:e;
+    return { x:(src.clientX-r.left)*sx, y:(src.clientY-r.top)*sy };
+  }
+
+  function wire() {
+    $id('imOpen').onclick=()=>$id('imFile2').click();
+    $id('imFile2').onchange=e=>{if(e.target.files[0])loadImage(e.target.files[0]);};
+    $id('imNew').onclick=()=>{ if(confirm('¿Cerrar esta imagen?')){ S.img=null; const p=$id('panel-imagen'); p.dataset.mounted=''; delete p.dataset.mounted; showDropZone(); p.dataset.mounted='1'; } };
+
+    document.querySelectorAll('#panel-imagen [data-tool]').forEach(b=>b.onclick=()=>setTool(b.dataset.tool));
+
+    $id('imRotL').onclick=()=>{ S.rotation=(S.rotation-90+360)%360; render(); };
+    $id('imRotR').onclick=()=>{ S.rotation=(S.rotation+90)%360; render(); };
+    $id('imFlipH').onclick=()=>{ S.flipH=!S.flipH; render(); };
+    $id('imFlipV').onclick=()=>{ S.flipV=!S.flipV; render(); };
+    $id('imReset').onclick=()=>{ S.filters={brightness:100,contrast:100,saturate:100,blur:0,grayscale:0}; S.rotation=0;S.flipH=false;S.flipV=false;S.objects=[]; buildUI(); };
+
+    /* Filtros */
+    const bind=(id,key,unit)=>{ const el=$id(id); if(!el)return; el.oninput=()=>{ S.filters[key]=parseFloat(el.value); const v=$id(id+'V'); if(v)v.textContent=el.value+(unit||''); render(); }; };
+    bind('imBright','brightness','%'); bind('imContrast','contrast','%'); bind('imSat','saturate','%'); bind('imBlur','blur',''); bind('imGray','grayscale','%');
+
+    /* Redimensionar */
+    const wI=$id('imW'), hI=$id('imH'), ratio=$id('imRatio');
+    wI.oninput=()=>{ if(ratio.checked){ hI.value=Math.round(parseInt(wI.value)*S.baseH/S.baseW); } };
+    hI.oninput=()=>{ if(ratio.checked){ wI.value=Math.round(parseInt(hI.value)*S.baseW/S.baseH); } };
+    $id('imApplyResize').onclick=()=>{
+      const nw=parseInt(wI.value), nh=parseInt(hI.value);
+      if(nw<1||nh<1||nw>8000||nh>8000){ alert('Tamaño inválido (1–8000px).'); return; }
+      const tmp=document.createElement('canvas'); tmp.width=nw; tmp.height=nh;
+      tmp.getContext('2d').drawImage(S.img,0,0,nw,nh);
+      const ni=new Image(); ni.onload=()=>{ S.img=ni; S.baseW=nw; S.baseH=nh; render(); }; ni.src=tmp.toDataURL();
+    };
+
+    /* Pincel / texto config */
+    const dc=$id('imDrawColor'); if(dc)dc.oninput=()=>S.drawColor=dc.value;
+    const ds=$id('imDrawSize'); if(ds)ds.oninput=()=>{S.drawSize=parseInt(ds.value);$id('imDrawSizeV').textContent=ds.value;};
+    const tc=$id('imTextColor'); if(tc)tc.oninput=()=>S.textColor=tc.value;
+    const ts=$id('imTextSize'); if(ts)ts.oninput=()=>{S.textSize=parseInt(ts.value);$id('imTextSizeV').textContent=ts.value;};
+
+    /* Canvas interacción: dibujar, texto, recortar */
+    let cropStart=null, cropRect=null;
+    const down=e=>{
+      e.preventDefault();
+      const pt=canvasPt(e);
+      if (S.tool==='draw') { S.drawing=true; S.objects.push({type:'path',color:S.drawColor,size:S.drawSize,points:[pt]}); }
+      else if (S.tool==='text') {
+        const txt=prompt('Texto a añadir:'); if(txt){ S.objects.push({type:'text',text:txt,x:pt.x,y:pt.y,color:S.textColor,size:S.textSize}); render(); }
+      }
+      else if (S.tool==='crop') { cropStart=pt; }
+    };
+    const move=e=>{
+      if (S.tool==='draw' && S.drawing) { const pt=canvasPt(e); S.objects[S.objects.length-1].points.push(pt); render(); }
+      else if (S.tool==='crop' && cropStart) {
+        const pt=canvasPt(e); render();
+        const x=Math.min(pt.x,cropStart.x), y=Math.min(pt.y,cropStart.y), w=Math.abs(pt.x-cropStart.x), h=Math.abs(pt.y-cropStart.y);
+        cropRect={x,y,w,h};
+        S.ctx.save(); S.ctx.strokeStyle='#3b82f6'; S.ctx.lineWidth=2; S.ctx.setLineDash([6,4]);
+        S.ctx.strokeRect(x,y,w,h);
+        S.ctx.fillStyle='rgba(59,130,246,.12)'; S.ctx.fillRect(x,y,w,h); S.ctx.restore();
+      }
+    };
+    const up=()=>{
+      if (S.tool==='draw') S.drawing=false;
+      else if (S.tool==='crop' && cropRect && cropRect.w>8 && cropRect.h>8) {
+        if (confirm('¿Recortar a la selección?')) applyCrop(cropRect);
+        cropStart=null; cropRect=null;
+      } else { cropStart=null; cropRect=null; }
+    };
+    S.canvas.addEventListener('mousedown',down); S.canvas.addEventListener('touchstart',down,{passive:false});
+    S.canvas.addEventListener('mousemove',move); S.canvas.addEventListener('touchmove',move,{passive:false});
+    S.canvas.addEventListener('mouseup',up); S.canvas.addEventListener('touchend',up);
+
+    /* Export */
+    $id('imExport').onclick=exportImage;
+  }
+
+  function applyCrop(rect) {
+    /* Renderiza el estado actual a un canvas y recorta */
+    const full=document.createElement('canvas'); full.width=S.canvas.width; full.height=S.canvas.height;
+    full.getContext('2d').drawImage(S.canvas,0,0);
+    const tmp=document.createElement('canvas'); tmp.width=Math.round(rect.w); tmp.height=Math.round(rect.h);
+    tmp.getContext('2d').drawImage(full, rect.x,rect.y,rect.w,rect.h, 0,0,rect.w,rect.h);
+    const ni=new Image();
+    ni.onload=()=>{ S.img=ni; S.baseW=tmp.width; S.baseH=tmp.height; S.rotation=0;S.flipH=false;S.flipV=false;
+      S.filters={brightness:100,contrast:100,saturate:100,blur:0,grayscale:0}; S.objects=[]; buildUI(); };
+    ni.src=tmp.toDataURL();
+  }
+
+  function exportImage() {
+    const fmt=$id('imFormat').value;
+    const ext=fmt==='image/jpeg'?'jpg':fmt==='image/webp'?'webp':'png';
+    /* Para JPG, fondo blanco (no transparencia) */
+    let out=S.canvas;
+    if (fmt==='image/jpeg') {
+      const t=document.createElement('canvas'); t.width=S.canvas.width; t.height=S.canvas.height;
+      const tc=t.getContext('2d'); tc.fillStyle='#fff'; tc.fillRect(0,0,t.width,t.height); tc.drawImage(S.canvas,0,0);
+      out=t;
+    }
+    out.toBlob(blob=>{
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement('a');
+      a.href=url; a.download=S.fileName.replace(/\.[^.]+$/,'')+'_editada.'+ext; a.click();
+      setTimeout(()=>URL.revokeObjectURL(url),1000);
+      if(typeof toast==='function')toast('✅ Imagen exportada como '+ext.toUpperCase());
+    }, fmt, 0.92);
+  }
+
+  function watch() {
+    const obs=new MutationObserver(()=>{
+      const p=$id('panel-imagen');
+      if(p&&p.classList.contains('active')&&!p.dataset.mounted)mount();
+    });
+    const main=document.querySelector('main')||document.querySelector('.main');
+    if(main)obs.observe(main,{subtree:true,attributes:true,attributeFilter:['class']});
+  }
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',watch);
+  else watch();
+
+  window.MFImageEditor={ openFromDataUrl, reset:showDropZone };
+})();
+</script>
+
 
 <!-- ═══ MovFlow · Analizador IA Previo ═══ -->
 <script>
