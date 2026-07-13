@@ -6920,18 +6920,40 @@ Firma: ____________________
     remove(id){ this._save(this.list().filter(t=>t.id!==id)); },
     /* Rellenar marcadores con datos extraídos del email */
     fill(body, data){
-      let out = body;
+      data = data || {};
+      const amt = (data.amounts && data.amounts[0]) || '';
+      const dt  = (data.dates && data.dates[0]) || '';
+      const em  = (data.emails && data.emails[0]) || '';
+      const tel = (data.phones && data.phones[0]) || '';
+      const hoy = new Date().toLocaleDateString('es-ES');
+      /* Mapa amplio: cada marcador puede tener varios alias */
       const map = {
-        FECHA: new Date().toLocaleDateString('es-ES'),
-        LUGAR: data.lugar||'[LUGAR]',
-        REMITENTE: data.from||'', DESTINATARIO: data.to||'',
-        ASUNTO: data.subject||'', IMPORTE: (data.amounts&&data.amounts[0])||'[IMPORTE]',
-        IMPORTE_TOTAL:(data.amounts&&data.amounts[0])||'[IMPORTE_TOTAL]',
-        IMPORTE_RENTA:(data.amounts&&data.amounts[0])||'[IMPORTE_RENTA]',
+        FECHA: hoy, FECHA_CONTRATO: hoy, FECHA_FIRMA: hoy,
+        LUGAR: data.lugar || '',
+        REMITENTE: data.from || '', DESTINATARIO: data.to || '',
+        NOMBRE: data.from || '', CONTACTO: [em, tel].filter(Boolean).join(' / '),
+        EMAIL: em, TELEFONO: tel, TELÉFONO: tel,
+        ASUNTO: data.subject || '', MOTIVO: data.subject || '',
+        IMPORTE: amt, IMPORTE_TOTAL: amt, IMPORTE_RENTA: amt, IMPORTE_ARRAS: amt, IMPORTE_FIANZA: amt,
+        FECHA_INICIO: dt, FECHA_FIN: '', FECHA_EFECTOS: dt, FECHA_ESCRITURA: dt,
+        EMPRESA: data.company || '', SOLICITANTE: data.from || '',
       };
-      Object.keys(map).forEach(k=>{ out = out.split('['+k+']').join(map[k]||('['+k+']')); });
+      /* Registrar qué se rellenó y qué queda pendiente */
+      const filled = [], pending = [];
+      let out = body;
+      Object.keys(map).forEach(k=>{
+        const token = '['+k+']';
+        if (out.includes(token)) {
+          if (map[k]) { out = out.split(token).join(map[k]); filled.push(k+' → '+map[k]); }
+        }
+      });
+      /* Marcadores restantes sin datos */
+      const rest = out.match(/\[[A-ZÁÉÍÓÚÑ_]{2,}\]/g) || [];
+      [...new Set(rest)].forEach(m=>pending.push(m.replace(/[\[\]]/g,'')));
+      this._lastReport = { filled, pending: [...new Set(pending)] };
       return out;
     },
+    lastReport(){ return this._lastReport || { filled:[], pending:[] }; },
   };
   window.MFLegalLib = MFLegalLib;
 })();
@@ -7327,16 +7349,57 @@ Firma: ____________________
       p.querySelectorAll('[data-use]').forEach(b=>b.addEventListener('click',()=>{
         const t = LL.get(b.dataset.use); if(!t) return;
         let body = t.body;
+        let report = { filled:[], pending:[] };
         if (ctxEmail && window.MFAnalyzer) {
           const data = MFAnalyzer._extractData(ctxEmail);
           body = LL.fill(t.body, data);
+          report = LL.lastReport();
         }
-        /* Resumen preliminar antes de generar */
-        const preview = `Plantilla: ${t.name}\nCategoría: ${t.cat}\n${ctxEmail?('Email de contexto: '+(ctxEmail.subject||'')):'Sin email de contexto'}\n\n¿Generar el documento en el Editor Word?`;
-        if (!confirm(preview)) return;
-        const html = body.split('\n').map(l=>`<p>${esc(l)||'&nbsp;'}</p>`).join('');
-        if (window.MFWordEditor) MFWordEditor.openWithContent(html, t.name);
+        openUsePreview(t, body, report);
       }));
+
+      /* Vista previa real antes de generar — muestra documento, datos insertados y pendientes */
+      function openUsePreview(t, body, report) {
+        const ov = document.createElement('div');
+        ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+        const filledHtml = report.filled.length
+          ? report.filled.map(f=>`<div style="font-size:11.5px;color:#059669;padding:1px 0">✓ ${esc(f)}</div>`).join('')
+          : '<div style="font-size:11.5px;color:#9ca3af">Sin datos automáticos (no hay email en contexto)</div>';
+        const pendingHtml = report.pending.length
+          ? report.pending.map(p=>`<span style="display:inline-block;background:#fef3c7;color:#92400e;border-radius:4px;font-size:11px;padding:1px 7px;margin:2px 3px 0 0">${esc(p)}</span>`).join('')
+          : '<div style="font-size:11.5px;color:#059669">✓ No quedan campos por rellenar</div>';
+        ov.innerHTML=`<div style="background:var(--bg-card,#fff);border-radius:14px;width:min(720px,96vw);max-height:90vh;overflow:hidden;box-shadow:0 16px 48px rgba(0,0,0,.24);display:flex;flex-direction:column">
+          <div style="padding:18px 22px;border-bottom:1px solid var(--border)">
+            <div style="font-size:16px;font-weight:800;color:var(--text)">📝 ${esc(t.name)}</div>
+            <div style="font-size:12px;color:var(--text-3);margin-top:2px">${esc(t.cat)}${ctxEmail?(' · Email: '+esc((ctxEmail.subject||'sin asunto').slice(0,50))):''}</div>
+          </div>
+          <div style="display:flex;gap:0;flex:1;overflow:hidden;min-height:0">
+            <div style="flex:1;overflow:auto;padding:18px 22px;border-right:1px solid var(--border)">
+              <div style="font-size:10px;font-weight:800;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Vista previa del documento</div>
+              <pre style="white-space:pre-wrap;word-break:break-word;font-family:Georgia,serif;font-size:12.5px;line-height:1.6;color:var(--text);margin:0">${esc(body)}</pre>
+            </div>
+            <div style="width:220px;min-width:220px;overflow:auto;padding:18px;background:var(--hover)">
+              <div style="font-size:10px;font-weight:800;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Datos insertados</div>
+              ${filledHtml}
+              <div style="font-size:10px;font-weight:800;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em;margin:16px 0 8px">Campos por completar</div>
+              ${pendingHtml}
+            </div>
+          </div>
+          <div style="padding:14px 22px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end">
+            <button id="upCancel" style="padding:8px 16px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--text-2);font-size:13px;cursor:pointer;font-family:inherit">Cancelar</button>
+            <button id="upWord" style="padding:8px 16px;border-radius:8px;border:1px solid var(--accent);background:transparent;color:var(--accent);font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">📝 Abrir en Word</button>
+            <button id="upPdf" style="padding:8px 16px;border-radius:8px;border:none;background:var(--accent);color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">📄 Generar PDF</button>
+          </div>
+        </div>`;
+        document.body.appendChild(ov);
+        const html = body.split('\n').map(l=>`<p>${esc(l)||'&nbsp;'}</p>`).join('');
+        ov.querySelector('#upCancel').onclick=()=>ov.remove();
+        ov.querySelector('#upWord').onclick=()=>{ ov.remove(); if(window.MFWordEditor) MFWordEditor.openWithContent(html, t.name); };
+        ov.querySelector('#upPdf').onclick=()=>{
+          ov.remove();
+          if(window.MFWordEditor){ MFWordEditor.openWithContent(html, t.name); setTimeout(()=>{ if(window.MFWordExportPdf) MFWordExportPdf(); }, 300); }
+        };
+      }
 
       /* Editar plantilla */
       p.querySelectorAll('[data-edit]').forEach(b=>b.addEventListener('click',()=>{
@@ -7438,6 +7501,7 @@ Firma: ____________________
   };
   window.MFTransfer=MFTransfer;
   window.MFWordEditor={ openWithContent };
+  window.MFWordExportPdf = exportPdf;
 
   /* Boot: montar al activar tab */
   function watch() {
