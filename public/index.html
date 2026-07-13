@@ -4981,13 +4981,13 @@ Cuerpo: ${(email.body||email.snippet||'').slice(0,1200)}`;
 
       'Contrato de arrendamiento': (d,e) => `CONTRATO DE ARRENDAMIENTO DE VIVIENDA\n${'═'.repeat(50)}\n\nREUNIDOS\n\nDe una parte, en concepto de PARTE ARRENDADORA:\n[Nombre del arrendador], con DNI nº [DNI], mayor de edad, con domicilio en [Dirección].\n\nY de otra parte, en concepto de PARTE ARRENDATARIA:\n[Nombre del arrendatario], con DNI nº [DNI], mayor de edad, con domicilio en [Dirección].\n\nACUERDAN\n\nPRIMERO. - OBJETO. Arrendamiento de la vivienda sita en [Dirección del inmueble].\n\nSEGUNDO. - DURACIÓN. Desde el [Fecha inicio] hasta el [Fecha fin].\n\nTERCERO. - RENTA. La renta mensual se fija en [Importe] €/mes.\n\nCUARTO. - FORMA DE PAGO. Mediante transferencia bancaria al IBAN: [IBAN].\n\nQUINTO. - FIANZA. Se constituye fianza por importe de [Importe] €.\n\nEn Madrid, a [Fecha de firma].`,
 
-      'Registro de factura': (d,e) => `REGISTRO DE FACTURA\n${'─'.repeat(40)}\n\nFecha de registro: ${new Date().toLocaleDateString('es-ES')}\nProveedor/Cliente: ${d.from||'[Nombre]'}\nConcepto: ${d.subject||'[Descripción]'}\n${d.amounts.length?'Importe(s):\n'+d.amounts.map(a=>'  • '+a).join('\n'):'Importe: [Pendiente de confirmar]'}\n${d.dates.length?'Fechas relevantes:\n'+d.dates.map(x=>'  • '+x).join('\n'):''}\n\nEstado: [Pendiente / Pagada / Vencida]\nReferencia: [Nº de factura]\n\nNotas: [Añadir observaciones]`,
+      'Registro de factura': (d,e) => `REGISTRO DE FACTURA\n${'─'.repeat(40)}\n\nFecha de registro: ${new Date().toLocaleDateString('es-ES')}\nProveedor/Cliente: ${d.from||'[Nombre]'}\nConcepto: ${d.subject||'[Descripción]'}\n${d.amounts.length?'Importe(s):\n'+d.amounts.map(a=>'  • '+a).join('\n'):'Importe: [Pendiente de confirmar]'}\n${d.dates.length?'Fechas relevantes:\n'+d.dates.map(x=>'  • '+x).join('\n'):''}\n\nEstado: [Pendiente / Pagada / Vencida]\nNº de factura: [Número]\n\nNotas: [Observaciones]`,
 
       'Acuse de recibo': (d,e) => `ACUSE DE RECIBO\n${'─'.repeat(40)}\n\nFecha: ${new Date().toLocaleDateString('es-ES')}\n\nSe acusa recibo de la comunicación recibida de:\n${d.from||'[Remitente]'}\n\nAsunto: ${d.subject||'[Asunto]'}\n${d.dates.length?'Con fecha: '+d.dates[0]:''}\n\nLa comunicación ha sido correctamente recibida y será procesada en el plazo establecido.\n\nCualquier consulta puede dirigirse a: [Email de contacto]\n\n[Nombre y cargo]\n[Organización]`,
 
       'Nota de seguimiento': (d,e) => `NOTA DE SEGUIMIENTO\n${'─'.repeat(40)}\n\nFecha: ${new Date().toLocaleDateString('es-ES')}\nAsunto: ${d.subject}\nContacto: ${d.from}\n\nRESUMEN:\n[Descripción breve del asunto]\n\nACCIONES PENDIENTES:\n☐ [Acción 1] — Plazo: [Fecha]\n☐ [Acción 2] — Plazo: [Fecha]\n☐ [Acción 3] — Plazo: [Fecha]\n\nFECHAS CLAVE:\n${d.dates.length?d.dates.map(x=>'• '+x).join('\n'):'• [Sin fechas detectadas]'}\n\nOBSERVACIONES:\n[Añadir notas relevantes]`,
 
-      'Presupuesto': (d,e) => `PRESUPUESTO\n${'═'.repeat(50)}\n\nNº Presupuesto: [AUTO-${Date.now().toString().slice(-6)}]\nFecha: ${new Date().toLocaleDateString('es-ES')}\nVálido hasta: [Fecha de validez]\n\nEMISOR:\n[Nombre / Empresa]\n[Dirección]\n[CIF/NIF]\n\nCLIENTE:\n${d.from||'[Nombre del cliente]'}\n\nCONCEPTOS:\n┌─────────────────────────────────┬──────────┬──────────┬──────────┐\n│ Descripción                     │ Cantidad │  Precio  │  Total   │\n├─────────────────────────────────┼──────────┼──────────┼──────────┤\n│ [Concepto 1]                    │    1     │  [€]     │  [€]     │\n│ [Concepto 2]                    │    1     │  [€]     │  [€]     │\n└─────────────────────────────────┴──────────┴──────────┴──────────┘\n\nBase imponible:  [€]\nIVA (21%):       [€]\nTOTAL:          [€]\n\nForma de pago: Transferencia bancaria\nPlazo de ejecución: [Plazo]`,
+      'Presupuesto': (d,e) => `PRESUPUESTO\n\nNº de presupuesto: [Número]\nFecha: ${new Date().toLocaleDateString('es-ES')}\nVálido hasta: [Fecha de validez]\n\nEMISOR:\n[Nombre / Empresa]\n[Dirección]\n[CIF/NIF]\n\nCLIENTE:\n${d.from||'[Nombre del cliente]'}\n\nCONCEPTOS:\n[Descripción]                    [Cantidad]    [Precio]    [Total]\n\nBase imponible:  [Importe]\nIVA (21%):       [Importe]\nTOTAL:          [Importe]\n\nForma de pago: Transferencia bancaria\nPlazo de ejecución: [Plazo]`,
 
       'Borrador de respuesta': (d,e) => `De: [Tu email]\nPara: ${d.emails[0]||d.from||'[Email del destinatario]'}\nAsunto: Re: ${d.subject}\n\nEstimado/a ${d.from||'[Nombre]'},\n\nGracias por su mensaje recibido${d.dates[0]?' el '+d.dates[0]:''}.\n\n[Escriba aquí su respuesta]\n\nQuedo a su disposición para cualquier consulta.\n\nSaludos cordiales,\n[Tu nombre]`,
     },
@@ -5292,14 +5292,19 @@ No incluyas explicaciones, solo el documento.`;
 
       /* Export TXT */
       wrap.querySelector('#mfaExportTxt').addEventListener('click', () => {
-        const blob = new Blob([area.value],{type:'text/plain;charset=utf-8'});
+        const cleaned = (window.MFCleanDoc ? window.MFCleanDoc(area.value) : area.value).replace(/\[?AUTO-?\d{4,}\]?/gi,'').replace(/\bmfh_[a-z_]+\b/gi,'');
+        const blob = new Blob([cleaned],{type:'text/plain;charset=utf-8'});
         const url  = URL.createObjectURL(blob);
         const a    = document.createElement('a');
         a.href=url; a.download=docName.replace(/\s+/g,'_')+'.txt'; a.click();
         URL.revokeObjectURL(url);
       });
 
-      /* Export PDF via print */
+      /* Limpiador de marcas del sistema (compartido; fallback local) */
+      const cleanDoc = txt => (window.MFCleanDoc ? window.MFCleanDoc(txt) : txt)
+        .replace(/\[?AUTO-?\d{4,}\]?/gi,'').replace(/Generado (por|con) MovFlow[^\n]*/gi,'').replace(/\bmfh_[a-z_]+\b/gi,'');
+
+      /* Export PDF via print — documento limpio, sin marcas del sistema */
       wrap.querySelector('#mfaExportPdf').addEventListener('click', () => {
         const w = window.open('','_blank','width=800,height=900');
         w.document.write(`<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><title>${escA(docName)}</title><style>
@@ -5307,7 +5312,7 @@ No incluyas explicaciones, solo el documento.`;
           pre{white-space:pre-wrap;word-break:break-word;font-family:inherit;margin:0}
           h1{font-size:14pt;border-bottom:1px solid #333;padding-bottom:6px;margin-bottom:20px}
           @page{margin:2cm} @media print{body{padding:0}}
-        </style></head><body><h1>${escA(docName)}</h1><pre>${escA(area.value)}</pre><script>window.onload=()=>{window.print();}<\/script></body></html>`);
+        </style></head><body><h1>${escA(docName)}</h1><pre>${escA(cleanDoc(area.value))}</pre><script>window.onload=()=>{window.print();}<\/script></body></html>`);
         w.document.close();
       });
 
@@ -7221,6 +7226,25 @@ Firma: ____________________
     } catch(e) { alert('Error importando .docx: '+e.message); $id('wdSt').textContent='Error al importar'; }
   }
 
+  /* Limpia cualquier rastro del sistema antes de exportar un documento final.
+     Elimina marcas de agua, IDs internos, series automáticas y etiquetas técnicas. */
+  function cleanForExport(html) {
+    let out = html;
+    /* Placeholders sin rellenar quedan vacíos (no [ENTRE_CORCHETES] visibles en el final) */
+    /* — no los borramos por si el usuario los quiere; solo quitamos marcas del sistema */
+    const patterns = [
+      /\[?AUTO-?\d{4,}\]?/gi,              // IDs auto: AUTO-123456
+      /Generado (por|con) MovFlow[^<\n]*/gi, // firmas del sistema
+      /MovFlow Hub[^<\n]{0,40}(Inbox Intelligence)?/gi,
+      /Referencia interna:[^<\n]*/gi,
+      /ID (interno|de sistema)[^<\n]*/gi,
+      /\bmfh_[a-z_]+\b/gi,                   // claves internas
+    ];
+    patterns.forEach(p => { out = out.replace(p, ''); });
+    return out;
+  }
+  window.MFCleanDoc = cleanForExport;
+
   function exportPdf() {
     const name=$id('wdName').value.trim()||'documento';
     const w=window.open('','_blank','width=820,height=980');
@@ -7233,7 +7257,7 @@ Firma: ____________________
       table{border-collapse:collapse;width:100%;margin:.6em 0}
       td{border:1px solid #666;padding:6px 9px;vertical-align:top}
       @page{margin:2.2cm}@media print{body{padding:0}}
-    </style></head><body>${$id('wdPage').innerHTML}<script>window.onload=()=>window.print();<\/script></body></html>`);
+    </style></head><body>${cleanForExport($id('wdPage').innerHTML)}<script>window.onload=()=>window.print();<\/script></body></html>`);
     w.document.close();
   }
 
