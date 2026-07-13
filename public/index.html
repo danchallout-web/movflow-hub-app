@@ -5726,7 +5726,7 @@ No incluyas explicaciones, solo el documento.`;
     if (S.mode === 'editar') {
       h += `<div class="p3-sep"></div>
       <span style="font-size:12px;color:#6b7280;display:inline-flex;align-items:center;gap:6px">
-        📝 <b>Haz clic sobre cualquier texto del documento para editarlo.</b> El texto nuevo sustituirá visualmente al original manteniendo posición y tamaño.
+        🪄 <b>Lápiz mágico activo.</b> Haz clic sobre cualquier texto para editarlo: MovFlow detecta y conserva su tamaño, color y tipo de letra originales.
       </span>`;
     }
 
@@ -5851,7 +5851,9 @@ No incluyas explicaciones, solo el documento.`;
       el.style.background = o.bg || '#ffffff';
       el.style.color = o.color || '#111827';
       el.style.fontSize = (o.fontSize||14)+'px';
-      el.style.fontFamily = o.fontFamily || 'Helvetica, Arial, sans-serif';
+      el.style.fontFamily = ({Helvetica:'Helvetica,Arial,sans-serif',Times:'\'Times New Roman\',Times,serif',Courier:'\'Courier New\',Courier,monospace'})[o.fontFamily||'Helvetica'] || (o.fontFamily||'Helvetica');
+      el.style.fontWeight = o.bold ? '700' : '400';
+      el.style.fontStyle = o.italic ? 'italic' : 'normal';
       el.style.lineHeight = '1.15';
       el.style.padding = '0 1px';
       el.style.whiteSpace = 'pre';
@@ -5915,20 +5917,66 @@ No incluyas explicaciones, solo el documento.`;
         const y = tx[5] - fontH;
         const w = Math.max(item.width * S.zoom, fontH * 0.6);
 
+        /* ── LÁPIZ MÁGICO: leer el estilo real del fragmento ── */
+        const style = readOriginalStyle(item, tc, x, y, fontH, w);
+
         const span = document.createElement('div');
         span.className = 'p3-tspan';
         span.dataset.key = key;
         span.style.cssText = `left:${x}px;top:${y}px;width:${w}px;height:${fontH*1.28}px;font-size:${fontH}px;line-height:${fontH*1.28}px`;
         span.textContent = item.str;
-        span.title = 'Clic para editar este texto';
+        span.title = 'Clic para editar (el estilo original se conservará)';
 
         span.addEventListener('click', e => {
           e.stopPropagation();
-          beginTextEdit(span, item, { key, x, y, w, h:fontH*1.28, fontH });
+          beginTextEdit(span, item, { key, x, y, w, h:fontH*1.28, fontH, style });
         });
         ol.appendChild(span);
       });
     } catch(e) { console.warn('TextLayer:', e); }
+  }
+
+  /* Lápiz mágico: analiza el estilo real de un fragmento de texto del PDF.
+     - Tamaño: exacto (fontH)
+     - Color: muestreado del canvas ya renderizado (píxel más oscuro del texto)
+     - Fuente: deducida del fontName de PDF.js (serif/sans/mono, negrita, cursiva) */
+  function readOriginalStyle(item, tc, x, y, fontH, w) {
+    const st = { fontSize: Math.round(fontH), color:'#111827', fontFamily:'Helvetica', bold:false, italic:false };
+
+    /* Fuente aproximada desde el nombre de fuente embebida */
+    try {
+      const styles = tc.styles || {};
+      const fname = (styles[item.fontName] && styles[item.fontName].fontFamily || item.fontName || '').toLowerCase();
+      if (/times|serif|georgia|roman|minion|garamond/.test(fname)) st.fontFamily='Times';
+      else if (/courier|mono|consol/.test(fname)) st.fontFamily='Courier';
+      else st.fontFamily='Helvetica';
+      if (/bold|black|heavy|semibold/.test(fname)) st.bold=true;
+      if (/italic|oblique/.test(fname)) st.italic=true;
+    } catch(_) {}
+
+    /* Color: muestrear el canvas renderizado en la zona del texto */
+    try {
+      const canvas = $id('p3C');
+      const cx = canvas.getContext('2d', { willReadFrequently:true });
+      const sx = Math.max(0, Math.round(x));
+      const sy = Math.max(0, Math.round(y));
+      const sw = Math.min(canvas.width - sx, Math.max(4, Math.round(w)));
+      const sh = Math.min(canvas.height - sy, Math.max(4, Math.round(fontH*1.2)));
+      if (sw > 0 && sh > 0) {
+        const px = cx.getImageData(sx, sy, sw, sh).data;
+        /* Buscar el píxel más oscuro no-blanco (el trazo del texto) */
+        let best=null, bestLum=999;
+        for (let i=0;i<px.length;i+=4) {
+          const r=px[i],g=px[i+1],b=px[i+2],a=px[i+3];
+          if (a<40) continue;
+          const lum=0.299*r+0.587*g+0.114*b;
+          if (lum<bestLum && lum<200) { bestLum=lum; best=[r,g,b]; }
+        }
+        if (best) st.color = '#'+best.map(v=>v.toString(16).padStart(2,'0')).join('');
+      }
+    } catch(_) {}
+
+    return st;
   }
 
   function beginTextEdit(span, item, geo) {
@@ -5948,15 +5996,19 @@ No incluyas explicaciones, solo el documento.`;
       const newText = span.textContent;
       if (!commit || newText === original) { span.textContent = original; return; }
 
-      /* Crear objeto textedit que cubre el original y muestra el nuevo texto.
-         Si el texto nuevo es más largo, el ancho crece automáticamente. */
+      /* Crear objeto textedit que cubre el original y muestra el nuevo texto,
+         REPLICANDO el estilo real detectado (lápiz mágico). */
       const approxCharW = geo.fontH * 0.52;
       const newW = Math.max(geo.w, newText.length * approxCharW);
+      const st = geo.style || {};
       const o = newObj('textedit', {
         x: geo.x, y: geo.y, w: newW, h: geo.h,
         text: newText,
-        fontSize: Math.round(geo.fontH),
-        color: '#111827',
+        fontSize: st.fontSize || Math.round(geo.fontH),
+        color: st.color || '#111827',
+        fontFamily: st.fontFamily || 'Helvetica',
+        bold: st.bold || false,
+        italic: st.italic || false,
         bg: '#ffffff',
         srcKey: geo.key,
         srcText: original,
