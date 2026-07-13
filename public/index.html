@@ -3053,6 +3053,8 @@ function showTrashToast(count, onUndo) {
 
 // ── Email detail — full body, attachments, selection panel, export toolbar ──
 function renderDetail(e) {
+  /* Email de contexto compartido entre todos los módulos */
+  if (e) S.contextEmail = e;
   /* Gmail-style: abrir = leído */
   if (e && !e.isRead) {
     e.isRead = true;
@@ -3927,12 +3929,31 @@ const ReadManager = {
   _load()  { try { return new Set(JSON.parse(localStorage.getItem(this.KEY)||'[]')); } catch { return new Set(); } },
   _save(s) { localStorage.setItem(this.KEY, JSON.stringify([...s])); },
   seeded() { return localStorage.getItem(this.KEY) !== null; },
-  /* Primera vez: todo el buzón existente se considera leído */
   seedIfEmpty(uids) { if (!this.seeded()) this._save(new Set(uids.map(String))); },
   isRead(id)   { return this._load().has(String(id)); },
-  markRead(id) { const s=this._load(); s.add(String(id)); this._save(s); },
-  markUnread(id) { const s=this._load(); s.delete(String(id)); this._save(s); },
+  markRead(id) { const s=this._load(); s.add(String(id)); this._save(s); this._syncServer([String(id)], []); },
+  markUnread(id) { const s=this._load(); s.delete(String(id)); this._save(s); this._syncServer([], [String(id)]); },
   unreadCount(emails) { const s=this._load(); return (emails||[]).filter(e=>!s.has(String(e.uid||e.id))).length; },
+  /* Sincronización servidor — fuente única de verdad entre dispositivos */
+  _syncServer(read, unread) {
+    fetch('/.netlify/functions/read-state', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ read, unread }),
+    }).catch(()=>{});
+  },
+  async pullServer() {
+    try {
+      const r = await fetch('/.netlify/functions/read-state');
+      if (!r.ok) return;
+      const data = await r.json();
+      if (Array.isArray(data.read)) {
+        /* El servidor manda: fusiona su estado con el local */
+        const local = this._load();
+        data.read.forEach(u => local.add(String(u)));
+        this._save(local);
+      }
+    } catch(_) {}
+  },
 };
 window.ReadManager = ReadManager;
 
@@ -4177,6 +4198,7 @@ async function loadEmails() {
     emails.sort((a,b) => new Date(b.date||0) - new Date(a.date||0));
     checkNewEmails(emails);
     await TrashManager.pullServer();
+    await ReadManager.pullServer();
     ReadManager.seedIfEmpty(emails.map(e=>String(e.uid||e.id)));
     emails.forEach(e => { e.isRead = ReadManager.isRead(String(e.uid||e.id)); });
     S.emails = TrashManager.filter(emails);
@@ -4266,7 +4288,9 @@ const bulkReadBtn = $('bulkReadBtn');
 if (bulkReadBtn) {
   bulkReadBtn.addEventListener('click', () => {
     const selected = Selection.getEmails(S._filtered || S.emails || []);
-    selected.forEach(e => { e.isRead = true; ReadManager.markRead(String(e.uid||e.id)); });
+    const ids = selected.map(e => String(e.uid||e.id));
+    selected.forEach(e => { e.isRead = true; });
+    { const s = ReadManager._load(); ids.forEach(id=>s.add(id)); ReadManager._save(s); ReadManager._syncServer(ids, []); }
     renderList(S._filtered || S.emails || []);
     buildSidebar();
     Selection.clear();
@@ -6624,6 +6648,263 @@ No incluyas explicaciones, solo el documento.`;
 </script>
 
 
+<!-- ═══ MovFlow · Biblioteca de Plantillas Legales ═══ -->
+<script>
+(function(){
+  'use strict';
+  if (window.__MF_LEGAL__) return;
+  window.__MF_LEGAL__ = true;
+
+  /* Plantillas base ESPAÑA — redacción original, sin datos personales.
+     Marcadores [ENTRE_CORCHETES] que la IA o el usuario rellenan. */
+  const SEED = [
+    { id:'seed_arr_viv', cat:'Arrendamientos', name:'Contrato de alquiler de vivienda',
+      body:`CONTRATO DE ARRENDAMIENTO DE VIVIENDA
+
+En [LUGAR], a [FECHA].
+
+REUNIDOS
+
+De una parte, D./Dña. [ARRENDADOR], mayor de edad, con DNI [DNI_ARRENDADOR] y domicilio en [DOMICILIO_ARRENDADOR], en adelante la PARTE ARRENDADORA.
+
+De otra parte, D./Dña. [ARRENDATARIO], mayor de edad, con DNI [DNI_ARRENDATARIO] y domicilio en [DOMICILIO_ARRENDATARIO], en adelante la PARTE ARRENDATARIA.
+
+Ambas partes se reconocen capacidad legal suficiente para contratar y ACUERDAN:
+
+PRIMERO. OBJETO. La parte arrendadora cede en arrendamiento a la parte arrendataria la vivienda sita en [DIRECCION_INMUEBLE], con referencia catastral [REF_CATASTRAL].
+
+SEGUNDO. DURACIÓN. El plazo de arrendamiento es de [DURACION], con inicio el [FECHA_INICIO] y finalización el [FECHA_FIN], prorrogable conforme a la Ley 29/1994 de Arrendamientos Urbanos.
+
+TERCERO. RENTA. La renta mensual se fija en [IMPORTE_RENTA] euros, pagaderos dentro de los primeros [DIA_PAGO] días de cada mes mediante transferencia a la cuenta [IBAN].
+
+CUARTO. FIANZA. A la firma, la parte arrendataria entrega [IMPORTE_FIANZA] euros en concepto de fianza legal.
+
+QUINTO. GASTOS. Los gastos de comunidad y suministros se distribuyen conforme a lo pactado entre las partes.
+
+SEXTO. CONSERVACIÓN. La parte arrendataria se obliga a conservar la vivienda y a devolverla en el estado en que la recibe.
+
+Y en prueba de conformidad, firman el presente contrato por duplicado en el lugar y fecha indicados.
+
+LA PARTE ARRENDADORA                    LA PARTE ARRENDATARIA` },
+
+    { id:'seed_arr_local', cat:'Arrendamientos', name:'Contrato de alquiler de local',
+      body:`CONTRATO DE ARRENDAMIENTO DE LOCAL DE NEGOCIO
+
+En [LUGAR], a [FECHA].
+
+REUNIDOS
+
+De una parte, [ARRENDADOR], con DNI/CIF [DNI_ARRENDADOR] (PARTE ARRENDADORA).
+De otra parte, [ARRENDATARIO], con DNI/CIF [DNI_ARRENDATARIO] (PARTE ARRENDATARIA).
+
+ACUERDAN:
+
+PRIMERO. OBJETO. Arrendamiento del local sito en [DIRECCION_LOCAL], destinado a la actividad de [ACTIVIDAD].
+
+SEGUNDO. DURACIÓN. [DURACION], desde [FECHA_INICIO] hasta [FECHA_FIN].
+
+TERCERO. RENTA. [IMPORTE_RENTA] euros mensuales, más el IVA aplicable.
+
+CUARTO. FIANZA. Dos mensualidades conforme al art. 36 LAU: [IMPORTE_FIANZA] euros.
+
+QUINTO. OBRAS Y ACTIVIDAD. La parte arrendataria destinará el local exclusivamente a la actividad indicada, siendo por su cuenta las licencias necesarias.
+
+Firmado por duplicado.
+
+LA PARTE ARRENDADORA                    LA PARTE ARRENDATARIA` },
+
+    { id:'seed_cv_veh', cat:'Compraventa', name:'Compraventa de vehículo',
+      body:`CONTRATO DE COMPRAVENTA DE VEHÍCULO
+
+En [LUGAR], a [FECHA].
+
+REUNIDOS
+
+VENDEDOR: [VENDEDOR], con DNI [DNI_VENDEDOR].
+COMPRADOR: [COMPRADOR], con DNI [DNI_COMPRADOR].
+
+ACUERDAN la compraventa del siguiente vehículo:
+- Marca y modelo: [MARCA_MODELO]
+- Matrícula: [MATRICULA]
+- Nº de bastidor: [BASTIDOR]
+- Kilómetros: [KM]
+
+PRIMERO. PRECIO. El precio total es de [IMPORTE] euros, que el comprador abona en este acto.
+
+SEGUNDO. ENTREGA. El vendedor entrega el vehículo y su documentación (permiso de circulación, ficha técnica e ITV en vigor).
+
+TERCERO. ESTADO. El comprador acepta el vehículo en el estado en que se encuentra, declarando el vendedor que está libre de cargas y al corriente de impuestos.
+
+CUARTO. CAMBIO DE TITULARIDAD. Ambas partes se comprometen a tramitar el cambio de titularidad en la DGT en el plazo legal.
+
+EL VENDEDOR                              EL COMPRADOR` },
+
+    { id:'seed_cv_inm', cat:'Compraventa', name:'Compraventa de inmueble (arras)',
+      body:`CONTRATO DE ARRAS PENITENCIALES (COMPRAVENTA DE INMUEBLE)
+
+En [LUGAR], a [FECHA].
+
+REUNIDOS
+
+PARTE VENDEDORA: [VENDEDOR], con DNI [DNI_VENDEDOR].
+PARTE COMPRADORA: [COMPRADOR], con DNI [DNI_COMPRADOR].
+
+EXPONEN que han convenido la compraventa del inmueble sito en [DIRECCION_INMUEBLE], con referencia catastral [REF_CATASTRAL], y a tal fin ACUERDAN:
+
+PRIMERO. PRECIO. El precio total de la compraventa se fija en [IMPORTE_TOTAL] euros.
+
+SEGUNDO. ARRAS. En este acto la parte compradora entrega [IMPORTE_ARRAS] euros en concepto de arras penitenciales (art. 1454 del Código Civil), a cuenta del precio.
+
+TERCERO. FORMALIZACIÓN. La escritura pública se otorgará antes del [FECHA_ESCRITURA] ante el Notario que designe la parte compradora.
+
+CUARTO. DESISTIMIENTO. Si desiste la parte compradora, perderá las arras. Si desiste la vendedora, las devolverá duplicadas.
+
+LA PARTE VENDEDORA                       LA PARTE COMPRADORA` },
+
+    { id:'seed_lab_mod', cat:'Laboral', name:'Carta de modificación de contrato',
+      body:`COMUNICACIÓN DE MODIFICACIÓN DE CONDICIONES
+
+[EMPRESA]
+[DIRECCION_EMPRESA]
+
+En [LUGAR], a [FECHA].
+
+A la atención de D./Dña. [TRABAJADOR]
+
+Estimado/a [TRABAJADOR]:
+
+Por medio de la presente le comunicamos que, a partir del [FECHA_EFECTOS], se modifican las siguientes condiciones de su contrato de trabajo:
+
+- Condición modificada: [CONDICION]
+- Situación anterior: [SITUACION_ANTERIOR]
+- Nueva situación: [SITUACION_NUEVA]
+- Motivo: [MOTIVO]
+
+Esta modificación se realiza conforme a lo previsto en el artículo 41 del Estatuto de los Trabajadores.
+
+Quedamos a su disposición para aclarar cualquier duda.
+
+Atentamente,
+
+[FIRMANTE]
+[CARGO]
+[EMPRESA]` },
+
+    { id:'seed_com_acuerdo', cat:'Acuerdos comerciales', name:'Acuerdo de colaboración',
+      body:`ACUERDO DE COLABORACIÓN COMERCIAL
+
+En [LUGAR], a [FECHA].
+
+REUNIDOS
+
+De una parte, [EMPRESA_A], con CIF [CIF_A] (PARTE A).
+De otra parte, [EMPRESA_B], con CIF [CIF_B] (PARTE B).
+
+EXPONEN que desean establecer una colaboración comercial y ACUERDAN:
+
+PRIMERO. OBJETO. El presente acuerdo tiene por objeto [OBJETO_COLABORACION].
+
+SEGUNDO. OBLIGACIONES. Cada parte se compromete a [OBLIGACIONES].
+
+TERCERO. DURACIÓN. El acuerdo tendrá una vigencia de [DURACION] desde su firma.
+
+CUARTO. CONFIDENCIALIDAD. Las partes guardarán confidencialidad sobre la información intercambiada.
+
+QUINTO. LEGISLACIÓN. El presente acuerdo se rige por la legislación española, sometiéndose las partes a los juzgados de [CIUDAD].
+
+PARTE A                                  PARTE B` },
+
+    { id:'seed_carta_formal', cat:'Cartas formales', name:'Carta formal / requerimiento',
+      body:`[REMITENTE]
+[DIRECCION_REMITENTE]
+
+[DESTINATARIO]
+[DIRECCION_DESTINATARIO]
+
+En [LUGAR], a [FECHA].
+
+Asunto: [ASUNTO]
+
+Estimado/a Sr./Sra.:
+
+Me dirijo a usted en relación con [MOTIVO].
+
+[CUERPO_DE_LA_CARTA]
+
+Por todo lo anterior, le solicito [PETICION] en un plazo de [PLAZO].
+
+A la espera de su respuesta, reciba un cordial saludo.
+
+[REMITENTE]
+[CARGO]` },
+
+    { id:'seed_admin', cat:'Documentos administrativos', name:'Solicitud a la Administración',
+      body:`SOLICITUD DIRIGIDA A [ORGANISMO]
+
+DATOS DEL SOLICITANTE
+Nombre y apellidos: [SOLICITANTE]
+DNI/NIE: [DNI]
+Domicilio a efectos de notificaciones: [DOMICILIO]
+Teléfono / correo: [CONTACTO]
+
+EXPONE:
+Que [EXPOSICION_HECHOS].
+
+SOLICITA:
+Que [PETICION].
+
+En [LUGAR], a [FECHA].
+
+Firma: ____________________
+
+[ORGANISMO]` },
+  ];
+
+  const MFLegalLib = {
+    KEY:'mfh_legal_templates_v1',
+    _load(){ try{ return JSON.parse(localStorage.getItem(this.KEY)||'null'); }catch{ return null; } },
+    _save(a){ try{ localStorage.setItem(this.KEY, JSON.stringify(a)); }catch{} },
+    list(){
+      let a = this._load();
+      if (!a) { a = SEED.slice(); this._save(a); }  // sembrar la primera vez
+      return a;
+    },
+    categories(){ return [...new Set(this.list().map(t=>t.cat))].sort(); },
+    byCategory(){
+      const map={};
+      this.list().forEach(t=>{ (map[t.cat]=map[t.cat]||[]).push(t); });
+      return map;
+    },
+    get(id){ return this.list().find(t=>t.id===id)||null; },
+    add(cat,name,body){
+      const a=this.list();
+      a.push({ id:'lt'+Date.now().toString(36), cat:cat||'General', name:name||'Plantilla', body:body||'' });
+      this._save(a); return a[a.length-1];
+    },
+    update(id,patch){
+      const a=this.list(); const t=a.find(x=>x.id===id);
+      if(t){ Object.assign(t,patch); this._save(a); } return t;
+    },
+    remove(id){ this._save(this.list().filter(t=>t.id!==id)); },
+    /* Rellenar marcadores con datos extraídos del email */
+    fill(body, data){
+      let out = body;
+      const map = {
+        FECHA: new Date().toLocaleDateString('es-ES'),
+        LUGAR: data.lugar||'[LUGAR]',
+        REMITENTE: data.from||'', DESTINATARIO: data.to||'',
+        ASUNTO: data.subject||'', IMPORTE: (data.amounts&&data.amounts[0])||'[IMPORTE]',
+        IMPORTE_TOTAL:(data.amounts&&data.amounts[0])||'[IMPORTE_TOTAL]',
+        IMPORTE_RENTA:(data.amounts&&data.amounts[0])||'[IMPORTE_RENTA]',
+      };
+      Object.keys(map).forEach(k=>{ out = out.split('['+k+']').join(map[k]||('['+k+']')); });
+      return out;
+    },
+  };
+  window.MFLegalLib = MFLegalLib;
+})();
+</script>
+
 <!-- ═══ MovFlow · Editor Word + Análisis + Transfer ═══ -->
 <script>
 (function () {
@@ -6855,31 +7136,105 @@ No incluyas explicaciones, solo el documento.`;
     p.dataset.mounted='1';
     render();
     function render() {
-      const models=(window.MFDocModels?MFDocModels.list():[]);
-      let h=`<div style="padding:24px;max-width:920px">
-        <h2 style="font-size:17px;font-weight:800;color:var(--text);margin-bottom:4px">🧠 Análisis IA</h2>
-        <p style="font-size:13px;color:var(--text-3);margin-bottom:18px">El análisis inteligente se ejecuta desde cada email con el botón <b>"📊 Análisis de Datos IA"</b>. Aquí gestionas la biblioteca de modelos documentales que la IA usa como referencia.</p>
-        <h3 style="font-size:13px;font-weight:800;color:var(--text-2);margin-bottom:10px">📚 Biblioteca de modelos documentales (${models.length})</h3>`;
-      if(!models.length) h+='<div style="font-size:13px;color:var(--text-3);padding:24px;text-align:center;background:var(--hover);border-radius:10px">Sin modelos guardados. Usa "💾 Guardar como modelo documental" en el análisis de un email.</div>';
-      else {
-        h+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px">';
-        models.forEach(m=>{
-          h+=`<div style="background:var(--bg-card,#fff);border:1px solid var(--border);border-radius:10px;padding:14px">
-            <div style="font-size:13px;font-weight:700;color:var(--text)">${esc(m.name)}</div>
-            <div style="font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:.04em;margin:3px 0 8px">${esc(m.category)}</div>
-            <div style="font-size:12px;color:var(--text-2);line-height:1.5;margin-bottom:10px">${esc((m.description||'').slice(0,110))}</div>
-            <button data-del="${m.id}" style="padding:5px 10px;border-radius:6px;border:1px solid #fca5a5;color:#dc2626;background:transparent;font-size:11.5px;cursor:pointer;font-family:inherit">🗑 Eliminar</button>
+      const LL = window.MFLegalLib;
+      const byCat = LL ? LL.byCategory() : {};
+      const cats = Object.keys(byCat).sort();
+      const ctxEmail = window.S && S.contextEmail;
+
+      let h=`<div style="padding:24px;max-width:1000px">
+        <h2 style="font-size:18px;font-weight:800;color:var(--text);margin-bottom:4px">🧠 Análisis IA · Biblioteca de plantillas</h2>
+        <p style="font-size:13px;color:var(--text-3);margin-bottom:8px">El análisis se ejecuta desde cada email con <b>"📊 Análisis de Datos IA"</b>. Aquí gestionas las plantillas legales que aceleran la creación de documentos.</p>`;
+
+      if (ctxEmail) {
+        h+=`<div style="background:rgba(37,99,235,.06);border:1px solid rgba(37,99,235,.2);border-radius:10px;padding:12px 14px;margin-bottom:16px;font-size:12.5px;color:var(--text-2)">
+          📎 <b>Email en contexto:</b> ${esc(ctxEmail.subject||'sin asunto')} — de ${esc(ctxEmail.fromName||ctxEmail.fromEmail||'')}. Al usar una plantilla, se rellenará con los datos de este email.</div>`;
+      }
+
+      h+=`<div style="display:flex;justify-content:space-between;align-items:center;margin:16px 0 10px">
+        <h3 style="font-size:14px;font-weight:800;color:var(--text-2)">📚 Plantillas legales (España)</h3>
+        <button id="alNewTpl" style="padding:7px 14px;border-radius:7px;border:1px solid var(--accent);background:var(--accent);color:#fff;font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit">+ Nueva plantilla</button>
+      </div>`;
+
+      cats.forEach(cat=>{
+        h+=`<div style="margin-bottom:18px">
+          <div style="font-size:12px;font-weight:800;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">📁 ${esc(cat)}</div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px">`;
+        byCat[cat].forEach(t=>{
+          h+=`<div style="background:var(--bg-card,#fff);border:1px solid var(--border);border-radius:10px;padding:13px">
+            <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:8px">${esc(t.name)}</div>
+            <div style="display:flex;gap:5px;flex-wrap:wrap">
+              <button data-use="${t.id}" style="padding:5px 10px;border-radius:6px;border:1px solid var(--accent);color:var(--accent);background:transparent;font-size:11.5px;cursor:pointer;font-family:inherit;font-weight:600">📝 Usar</button>
+              <button data-edit="${t.id}" style="padding:5px 9px;border-radius:6px;border:1px solid var(--border);color:var(--text-2);background:transparent;font-size:11.5px;cursor:pointer;font-family:inherit">✏️</button>
+              <button data-del="${t.id}" style="padding:5px 9px;border-radius:6px;border:1px solid #fca5a5;color:#dc2626;background:transparent;font-size:11.5px;cursor:pointer;font-family:inherit">🗑</button>
+            </div>
           </div>`;
         });
-        h+='</div>';
-      }
+        h+='</div></div>';
+      });
+
       h+='</div>';
       p.innerHTML=h;
-      p.querySelectorAll('[data-del]').forEach(b=>b.addEventListener('click',()=>{
-        if(!confirm('¿Eliminar este modelo de la biblioteca?'))return;
-        MFDocModels.remove(b.dataset.del);
-        p.dataset.mounted=''; delete p.dataset.mounted; mountAnalisis();
+
+      const reload = ()=>{ p.dataset.mounted=''; delete p.dataset.mounted; mountAnalisis(); };
+
+      /* Usar plantilla → rellenar con email de contexto → transferir a Word */
+      p.querySelectorAll('[data-use]').forEach(b=>b.addEventListener('click',()=>{
+        const t = LL.get(b.dataset.use); if(!t) return;
+        let body = t.body;
+        if (ctxEmail && window.MFAnalyzer) {
+          const data = MFAnalyzer._extractData(ctxEmail);
+          body = LL.fill(t.body, data);
+        }
+        /* Resumen preliminar antes de generar */
+        const preview = `Plantilla: ${t.name}\nCategoría: ${t.cat}\n${ctxEmail?('Email de contexto: '+(ctxEmail.subject||'')):'Sin email de contexto'}\n\n¿Generar el documento en el Editor Word?`;
+        if (!confirm(preview)) return;
+        const html = body.split('\n').map(l=>`<p>${esc(l)||'&nbsp;'}</p>`).join('');
+        if (window.MFWordEditor) MFWordEditor.openWithContent(html, t.name);
       }));
+
+      /* Editar plantilla */
+      p.querySelectorAll('[data-edit]').forEach(b=>b.addEventListener('click',()=>{
+        const t = LL.get(b.dataset.edit); if(!t) return;
+        openTplEditor(t);
+      }));
+
+      /* Eliminar */
+      p.querySelectorAll('[data-del]').forEach(b=>b.addEventListener('click',()=>{
+        if(!confirm('¿Eliminar esta plantilla?'))return;
+        LL.remove(b.dataset.del); reload();
+      }));
+
+      /* Nueva plantilla */
+      $id('alNewTpl').addEventListener('click', ()=> openTplEditor(null));
+
+      function openTplEditor(tpl) {
+        const ov=document.createElement('div');
+        ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+        ov.innerHTML=`<div style="background:var(--bg-card,#fff);border-radius:14px;padding:22px;width:min(640px,96vw);max-height:90vh;overflow:auto;box-shadow:0 16px 48px rgba(0,0,0,.24)">
+          <h3 style="font-size:15px;font-weight:800;margin-bottom:14px;color:var(--text)">${tpl?'Editar plantilla':'Nueva plantilla'}</h3>
+          <label style="font-size:12px;color:var(--text-3);font-weight:700;display:block;margin-bottom:4px">Categoría</label>
+          <input id="tplCat" value="${tpl?esc(tpl.cat):''}" placeholder="Ej: Arrendamientos" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:7px;font-size:13px;box-sizing:border-box;margin-bottom:12px;font-family:inherit">
+          <label style="font-size:12px;color:var(--text-3);font-weight:700;display:block;margin-bottom:4px">Nombre</label>
+          <input id="tplName" value="${tpl?esc(tpl.name):''}" placeholder="Ej: Contrato de alquiler" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:7px;font-size:13px;box-sizing:border-box;margin-bottom:12px;font-family:inherit">
+          <label style="font-size:12px;color:var(--text-3);font-weight:700;display:block;margin-bottom:4px">Contenido (usa [MARCADORES] para datos variables)</label>
+          <textarea id="tplBody" style="width:100%;height:240px;padding:10px;border:1px solid var(--border);border-radius:7px;font-size:12.5px;box-sizing:border-box;font-family:monospace;line-height:1.5;resize:vertical">${tpl?esc(tpl.body):''}</textarea>
+          <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+            <button id="tplCancel" style="padding:8px 16px;border-radius:7px;border:1px solid var(--border);background:transparent;color:var(--text-2);font-size:13px;cursor:pointer;font-family:inherit">Cancelar</button>
+            <button id="tplSave" style="padding:8px 16px;border-radius:7px;border:none;background:var(--accent);color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">Guardar</button>
+          </div>
+        </div>`;
+        document.body.appendChild(ov);
+        ov.querySelector('#tplCancel').onclick=()=>ov.remove();
+        ov.querySelector('#tplSave').onclick=()=>{
+          const cat=ov.querySelector('#tplCat').value.trim()||'General';
+          const name=ov.querySelector('#tplName').value.trim();
+          const body=ov.querySelector('#tplBody').value;
+          if(!name){alert('Indica un nombre.');return;}
+          if(tpl) LL.update(tpl.id,{cat,name,body});
+          else LL.add(cat,name,body);
+          ov.remove(); reload();
+        };
+      }
     }
   }
 
