@@ -901,6 +901,7 @@
     <div class="nav-tab" data-panel="word">Editor Word</div>
     <div class="nav-tab" data-panel="pdfeditor">Editor PDF</div>
     <div class="nav-tab" data-panel="imagen">Editor Imagen</div>
+    <div class="nav-tab" data-panel="hojas">Hojas de Cálculo</div>
     <div class="nav-tab" data-panel="extractor">Extracción</div>
   </div>
   <div class="nav-sep"></div>
@@ -1040,6 +1041,7 @@
   <div class="panel" id="panel-word"></div>
   <div class="panel" id="panel-analisis"></div>
   <div class="panel" id="panel-imagen"></div>
+  <div class="panel" id="panel-hojas"></div>
 
   </main>
 </div>
@@ -7882,6 +7884,388 @@ Firma: ____________________
   else watch();
 
   window.MFImageEditor={ openFromDataUrl, reset:showDropZone };
+})();
+</script>
+
+
+<!-- ═══ MovFlow · Hojas de Cálculo ═══ -->
+<script>
+(function(){
+  'use strict';
+  if (window.__MF_SHEET__) return;
+  window.__MF_SHEET__ = true;
+
+  const $id = id => document.getElementById(id);
+  const esc = s => String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const SHEETJS = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+
+  const CSS = `
+  #panel-hojas.active{display:flex!important;flex-direction:column;height:calc(100vh - 52px);overflow:hidden;background:#e8eaed}
+  .sh-tb{background:#fff;border-bottom:1px solid #e5e7eb;padding:6px 12px;display:flex;align-items:center;gap:5px;flex-wrap:wrap;flex-shrink:0;box-shadow:0 1px 3px rgba(0,0,0,.05);min-height:42px}
+  .sh-g{display:flex;align-items:center;gap:4px;flex-shrink:0}
+  .sh-sep{width:1px;height:22px;background:#e5e7eb;margin:0 4px;flex-shrink:0}
+  .sh-btn{padding:5px 10px;border:1px solid #e5e7eb;border-radius:7px;font-size:12px;cursor:pointer;background:#fff;color:#374151;font-family:inherit;transition:all .12s;white-space:nowrap;display:inline-flex;align-items:center;gap:4px}
+  .sh-btn:hover{background:#f9fafb;border-color:#d1d5db}
+  .sh-btn.active{background:#3b82f6;color:#fff;border-color:#3b82f6}
+  .sh-btn.b{font-weight:800}.sh-btn.i{font-style:italic}.sh-btn.u{text-decoration:underline}
+  .sh-btn.success{background:#059669;color:#fff;border-color:#059669}
+  .sh-sel{padding:5px 7px;border:1px solid #e5e7eb;border-radius:6px;font-size:12px;font-family:inherit;background:#fff;cursor:pointer}
+  .sh-color{width:26px;height:26px;border:1px solid #e5e7eb;border-radius:6px;cursor:pointer;padding:1px;background:#fff}
+  .sh-lbl{font-size:10px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.05em;padding:0 3px}
+  .sh-fbar{background:#fff;border-bottom:1px solid #e5e7eb;padding:5px 12px;display:flex;align-items:center;gap:8px;flex-shrink:0}
+  .sh-cellref{font-size:12px;font-weight:700;color:#374151;min-width:44px;font-family:monospace;text-align:center;background:#f3f4f6;padding:4px 6px;border-radius:5px}
+  .sh-fx{flex:1;padding:5px 9px;border:1px solid #e5e7eb;border-radius:6px;font-size:13px;font-family:monospace}
+  .sh-fx:focus{outline:none;border-color:#3b82f6}
+  .sh-scroll{flex:1;overflow:auto;background:#fff;min-height:0}
+  .sh-table{border-collapse:collapse;table-layout:fixed;font-size:13px}
+  .sh-table th{background:#f3f4f6;border:1px solid #d1d5db;font-weight:600;color:#6b7280;font-size:11px;text-align:center;position:sticky;padding:3px;user-select:none}
+  .sh-table th.corner{left:0;top:0;z-index:3;width:38px;min-width:38px}
+  .sh-table th.colh{top:0;z-index:2;min-width:88px;width:88px}
+  .sh-table th.rowh{left:0;z-index:1;width:38px;min-width:38px;background:#f3f4f6}
+  .sh-table td{border:1px solid #e5e7eb;padding:0;height:24px;min-width:88px;width:88px;overflow:hidden}
+  .sh-table td input{width:100%;height:100%;border:none;padding:2px 6px;font-size:13px;font-family:inherit;background:transparent;box-sizing:border-box}
+  .sh-table td input:focus{outline:2px solid #3b82f6;outline-offset:-2px;background:#fff}
+  .sh-table td.sel{background:rgba(59,130,246,.1)}
+  .sh-status{background:#fff;border-top:1px solid #e5e7eb;padding:4px 14px;font-size:11px;color:#9ca3af;flex-shrink:0;display:flex;gap:12px}`;
+  (function(){ if(document.getElementById('sh-css'))return; const st=document.createElement('style'); st.id='sh-css'; st.textContent=CSS; document.head.appendChild(st); })();
+
+  const ROWS=40, COLS=18;
+  const colName = i => { let s=''; i++; while(i>0){ s=String.fromCharCode(65+(i-1)%26)+s; i=Math.floor((i-1)/26); } return s; };
+
+  const S = {
+    data:{},     // "R,C" → { v:valor, f:formula, s:{estilo} }
+    sel:null,    // {r,c}
+    name:'hoja.xlsx',
+  };
+
+  const key=(r,c)=>r+','+c;
+  const getCell=(r,c)=>S.data[key(r,c)]||null;
+  const setCell=(r,c,patch)=>{ const k=key(r,c); S.data[k]=Object.assign(S.data[k]||{v:'',f:'',s:{}},patch); };
+
+  function mount() {
+    const p=$id('panel-hojas');
+    if(!p||p.dataset.mounted)return;
+    p.dataset.mounted='1';
+    buildUI();
+  }
+
+  function buildUI() {
+    const p=$id('panel-hojas');
+    p.innerHTML=`
+    <div class="sh-tb">
+      <div class="sh-g">
+        <button class="sh-btn" id="shNew">🗋 Nueva</button>
+        <button class="sh-btn" id="shOpen">📂 Abrir</button>
+        <input type="file" id="shFile" accept=".xlsx,.xls,.csv" style="display:none">
+      </div>
+      <div class="sh-sep"></div>
+      <span class="sh-lbl">Formato</span>
+      <div class="sh-g">
+        <select class="sh-sel" id="shFont" title="Tipo de letra">
+          <option value="Arial, sans-serif">Arial</option>
+          <option value="Georgia, serif">Georgia</option>
+          <option value="'Times New Roman', serif">Times</option>
+          <option value="'Courier New', monospace">Courier</option>
+          <option value="Calibri, sans-serif">Calibri</option>
+        </select>
+        <select class="sh-sel" id="shSize" title="Tamaño">
+          <option>10</option><option>11</option><option selected>13</option><option>16</option><option>18</option><option>22</option>
+        </select>
+        <button class="sh-btn b" id="shBold" title="Negrita">B</button>
+        <button class="sh-btn i" id="shItal" title="Cursiva">I</button>
+        <button class="sh-btn u" id="shUnd" title="Subrayado">U</button>
+        <input type="color" class="sh-color" id="shColor" value="#111827" title="Color de texto">
+        <input type="color" class="sh-color" id="shBg" value="#ffffff" title="Color de fondo">
+      </div>
+      <div class="sh-sep"></div>
+      <span class="sh-lbl">Alinear</span>
+      <div class="sh-g">
+        <button class="sh-btn" id="shAL" title="Izquierda">⇤</button>
+        <button class="sh-btn" id="shAC" title="Centro">⇹</button>
+        <button class="sh-btn" id="shAR" title="Derecha">⇥</button>
+        <button class="sh-btn" id="shBorder" title="Bordes">▦</button>
+      </div>
+      <div class="sh-sep"></div>
+      <span class="sh-lbl">Nº</span>
+      <div class="sh-g">
+        <select class="sh-sel" id="shNumFmt" title="Formato de número">
+          <option value="">General</option>
+          <option value="int">1.234</option>
+          <option value="dec">1.234,56</option>
+          <option value="eur">1.234,56 €</option>
+          <option value="pct">12,34 %</option>
+        </select>
+      </div>
+      <div class="sh-sep"></div>
+      <div class="sh-g">
+        <button class="sh-btn success" id="shExport">⬇ Exportar XLSX</button>
+      </div>
+    </div>
+    <div class="sh-fbar">
+      <span class="sh-cellref" id="shRef">A1</span>
+      <input class="sh-fx" id="shFx" placeholder="Valor o fórmula (=A1+B1, =SUMA(A1:A5))" spellcheck="false">
+    </div>
+    <div class="sh-scroll" id="shScroll"></div>
+    <div class="sh-status">
+      <span id="shSt">Lista para editar</span>
+      <span id="shCalc"></span>
+    </div>`;
+    renderGrid();
+    wire();
+  }
+
+  function renderGrid() {
+    const sc=$id('shScroll'); if(!sc)return;
+    let h='<table class="sh-table"><thead><tr><th class="corner"></th>';
+    for(let c=0;c<COLS;c++) h+=`<th class="colh">${colName(c)}</th>`;
+    h+='</tr></thead><tbody>';
+    for(let r=0;r<ROWS;r++){
+      h+=`<tr><th class="rowh">${r+1}</th>`;
+      for(let c=0;c<COLS;c++){
+        const cell=getCell(r,c);
+        const disp=cell?formatDisplay(cell):'';
+        const st=cell&&cell.s?styleStr(cell.s):'';
+        h+=`<td data-r="${r}" data-c="${c}"><input value="${esc(disp)}" data-r="${r}" data-c="${c}" style="${st}"></td>`;
+      }
+      h+='</tr>';
+    }
+    h+='</tbody></table>';
+    sc.innerHTML=h;
+  }
+
+  function styleStr(s){
+    let out='';
+    if(s.font)out+=`font-family:${s.font};`;
+    if(s.size)out+=`font-size:${s.size}px;`;
+    if(s.bold)out+='font-weight:700;';
+    if(s.italic)out+='font-style:italic;';
+    if(s.underline)out+='text-decoration:underline;';
+    if(s.color)out+=`color:${s.color};`;
+    if(s.bg)out+=`background:${s.bg};`;
+    if(s.align)out+=`text-align:${s.align};`;
+    if(s.border)out+='outline:1px solid #94a3b8;outline-offset:-1px;';
+    return out;
+  }
+
+  /* ── Formato de visualización de números ── */
+  function formatDisplay(cell) {
+    const raw = cell.f ? computeFormula(cell.f) : cell.v;
+    const fmt = cell.s && cell.s.numFmt;
+    if (fmt && raw!=='' && !isNaN(parseFloat(raw))) {
+      const n = parseFloat(raw);
+      if (fmt==='int') return n.toLocaleString('es-ES',{maximumFractionDigits:0});
+      if (fmt==='dec') return n.toLocaleString('es-ES',{minimumFractionDigits:2,maximumFractionDigits:2});
+      if (fmt==='eur') return n.toLocaleString('es-ES',{minimumFractionDigits:2,maximumFractionDigits:2})+' €';
+      if (fmt==='pct') return (n).toLocaleString('es-ES',{minimumFractionDigits:2,maximumFractionDigits:2})+' %';
+    }
+    return raw;
+  }
+
+  /* ── Motor de fórmulas básico ── */
+  function cellValue(ref) {
+    const m = ref.match(/^([A-Z]+)(\d+)$/i);
+    if (!m) return 0;
+    let col=0; const letters=m[1].toUpperCase();
+    for(let i=0;i<letters.length;i++) col=col*26+(letters.charCodeAt(i)-64);
+    col-=1;
+    const row=parseInt(m[2])-1;
+    const cell=getCell(row,col);
+    if(!cell) return 0;
+    const v = cell.f ? computeFormula(cell.f) : cell.v;
+    const n = parseFloat(v);
+    return isNaN(n)?0:n;
+  }
+
+  function expandRange(range) {
+    const m = range.match(/^([A-Z]+\d+):([A-Z]+\d+)$/i);
+    if(!m) return [range];
+    const p=r=>{ const mm=r.match(/^([A-Z]+)(\d+)$/i); let col=0; const L=mm[1].toUpperCase(); for(let i=0;i<L.length;i++)col=col*26+(L.charCodeAt(i)-64); return {c:col-1,r:parseInt(mm[2])-1}; };
+    const a=p(m[1]), b=p(m[2]);
+    const refs=[];
+    for(let r=Math.min(a.r,b.r);r<=Math.max(a.r,b.r);r++)
+      for(let c=Math.min(a.c,b.c);c<=Math.max(a.c,b.c);c++)
+        refs.push(colName(c)+(r+1));
+    return refs;
+  }
+
+  function computeFormula(f) {
+    try {
+      let expr = f.replace(/^=/,'').trim();
+      /* Funciones: SUMA, PROMEDIO, MAX, MIN, CONTAR */
+      expr = expr.replace(/(SUMA|SUM|PROMEDIO|AVERAGE|MAX|MIN|CONTAR|COUNT)\s*\(([^)]+)\)/gi, (m, fn, args) => {
+        const refs = args.split(/[;,]/).flatMap(a => a.includes(':') ? expandRange(a.trim()) : [a.trim()]);
+        const nums = refs.map(cellValue);
+        fn=fn.toUpperCase();
+        if(fn==='SUMA'||fn==='SUM') return nums.reduce((a,b)=>a+b,0);
+        if(fn==='PROMEDIO'||fn==='AVERAGE') return nums.length?nums.reduce((a,b)=>a+b,0)/nums.length:0;
+        if(fn==='MAX') return Math.max(...nums,0);
+        if(fn==='MIN') return Math.min(...nums,0);
+        if(fn==='CONTAR'||fn==='COUNT') return nums.filter(n=>n!==0).length;
+        return 0;
+      });
+      /* Referencias sueltas A1 → valor */
+      expr = expr.replace(/\b([A-Z]+\d+)\b/gi, r => cellValue(r));
+      /* Solo permitir aritmética segura */
+      if (!/^[\d\s+\-*/().,]+$/.test(expr)) return '#ERROR';
+      const val = Function('"use strict";return ('+expr.replace(/,/g,'.')+')')();
+      return (typeof val==='number' && isFinite(val)) ? Math.round(val*1e6)/1e6 : '#ERROR';
+    } catch(_) { return '#ERROR'; }
+  }
+
+  function selectCell(r,c) {
+    S.sel={r,c};
+    document.querySelectorAll('#panel-hojas td.sel').forEach(t=>t.classList.remove('sel'));
+    const td=document.querySelector(`#panel-hojas td[data-r="${r}"][data-c="${c}"]`);
+    if(td)td.classList.add('sel');
+    const cell=getCell(r,c);
+    $id('shRef').textContent=colName(c)+(r+1);
+    $id('shFx').value=cell?(cell.f||cell.v):'';
+  }
+
+  function commitCell(r,c,val) {
+    if(val.startsWith('=')) setCell(r,c,{f:val,v:''});
+    else setCell(r,c,{v:val,f:''});
+    /* Recalcular toda la rejilla (fórmulas dependientes) */
+    refreshValues();
+  }
+
+  function refreshValues() {
+    document.querySelectorAll('#panel-hojas td input').forEach(inp=>{
+      const r=+inp.dataset.r, c=+inp.dataset.c;
+      if(document.activeElement===inp)return;
+      const cell=getCell(r,c);
+      inp.value=cell?formatDisplay(cell):'';
+      inp.style.cssText=cell&&cell.s?styleStr(cell.s):'';
+    });
+  }
+
+  function applyStyle(patch) {
+    if(!S.sel)return;
+    const {r,c}=S.sel;
+    const cell=getCell(r,c)||{v:'',f:'',s:{}};
+    cell.s=Object.assign({},cell.s,patch);
+    setCell(r,c,{s:cell.s});
+    refreshValues();
+  }
+
+  function wire() {
+    const sc=$id('shScroll');
+    /* Edición de celdas */
+    sc.addEventListener('focusin', e=>{
+      if(e.target.tagName==='INPUT'){
+        const r=+e.target.dataset.r, c=+e.target.dataset.c;
+        selectCell(r,c);
+        const cell=getCell(r,c);
+        e.target.value=cell?(cell.f||cell.v):''; // mostrar fórmula al editar
+      }
+    });
+    sc.addEventListener('focusout', e=>{
+      if(e.target.tagName==='INPUT'){
+        const r=+e.target.dataset.r, c=+e.target.dataset.c;
+        commitCell(r,c,e.target.value);
+        const cell=getCell(r,c);
+        e.target.value=cell?formatDisplay(cell):'';
+      }
+    });
+    sc.addEventListener('keydown', e=>{
+      if(e.target.tagName!=='INPUT')return;
+      const r=+e.target.dataset.r, c=+e.target.dataset.c;
+      if(e.key==='Enter'){ e.preventDefault(); const nx=document.querySelector(`#panel-hojas input[data-r="${r+1}"][data-c="${c}"]`); if(nx)nx.focus(); }
+      if(e.key==='Tab'){ e.preventDefault(); const nx=document.querySelector(`#panel-hojas input[data-r="${r}"][data-c="${c+1}"]`); if(nx)nx.focus(); }
+    });
+
+    /* Barra de fórmulas */
+    $id('shFx').addEventListener('keydown', e=>{
+      if(e.key==='Enter'&&S.sel){ commitCell(S.sel.r,S.sel.c,$id('shFx').value); refreshValues(); }
+    });
+
+    /* Formato */
+    $id('shBold').onclick=()=>toggleStyle('bold');
+    $id('shItal').onclick=()=>toggleStyle('italic');
+    $id('shUnd').onclick=()=>toggleStyle('underline');
+    $id('shFont').onchange=()=>applyStyle({font:$id('shFont').value});
+    $id('shSize').onchange=()=>applyStyle({size:parseInt($id('shSize').value)});
+    $id('shColor').oninput=()=>applyStyle({color:$id('shColor').value});
+    $id('shBg').oninput=()=>applyStyle({bg:$id('shBg').value});
+    $id('shAL').onclick=()=>applyStyle({align:'left'});
+    $id('shAC').onclick=()=>applyStyle({align:'center'});
+    $id('shAR').onclick=()=>applyStyle({align:'right'});
+    $id('shBorder').onclick=()=>toggleStyle('border');
+    $id('shNumFmt').onchange=()=>applyStyle({numFmt:$id('shNumFmt').value});
+
+    $id('shNew').onclick=()=>{ if(confirm('¿Nueva hoja? Se perderán los cambios no exportados.')){ S.data={}; S.sel=null; renderGrid(); } };
+    $id('shOpen').onclick=()=>$id('shFile').click();
+    $id('shFile').onchange=e=>{ if(e.target.files[0])importFile(e.target.files[0]); };
+    $id('shExport').onclick=exportXLSX;
+
+    function toggleStyle(prop){ if(!S.sel)return; const cell=getCell(S.sel.r,S.sel.c); const cur=cell&&cell.s&&cell.s[prop]; applyStyle({[prop]:!cur}); }
+  }
+
+  async function ensureSheetJS(){ if(window.XLSX)return; await new Promise((res,rej)=>{ const s=document.createElement('script'); s.src=SHEETJS; s.onload=res; s.onerror=rej; document.head.appendChild(s); }); }
+
+  async function importFile(file){
+    await ensureSheetJS();
+    $id('shSt').textContent='Importando…';
+    const rd=new FileReader();
+    rd.onload=()=>{
+      try{
+        const wb=XLSX.read(rd.result,{type:'binary'});
+        const ws=wb.Sheets[wb.SheetNames[0]];
+        const arr=XLSX.utils.sheet_to_json(ws,{header:1,raw:false});
+        S.data={};
+        arr.forEach((row,r)=>{ if(r>=ROWS)return; (row||[]).forEach((val,c)=>{ if(c>=COLS)return; if(val!=='' && val!=null){ const s=String(val); setCell(r,c, s.startsWith('=')?{f:s}:{v:s}); } }); });
+        S.name=file.name.replace(/\.[^.]+$/,'')+'.xlsx';
+        renderGrid(); refreshValues();
+        $id('shSt').textContent='Importado: '+file.name;
+      }catch(err){ alert('Error importando: '+err.message); $id('shSt').textContent='Error'; }
+    };
+    rd.readAsBinaryString(file);
+  }
+
+  async function exportXLSX(){
+    await ensureSheetJS();
+    /* Construir matriz de valores calculados */
+    const aoa=[];
+    for(let r=0;r<ROWS;r++){
+      const row=[];
+      for(let c=0;c<COLS;c++){
+        const cell=getCell(r,c);
+        if(cell){ const v=cell.f?computeFormula(cell.f):cell.v; const n=parseFloat(v); row.push(!isNaN(n)&&v!==''&&/^-?[\d.,]+$/.test(String(v))?n:v); }
+        else row.push('');
+      }
+      aoa.push(row);
+    }
+    /* Recortar filas/columnas vacías al final */
+    while(aoa.length && aoa[aoa.length-1].every(x=>x==='')) aoa.pop();
+    const ws=XLSX.utils.aoa_to_sheet(aoa);
+    const wb=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb,ws,'Hoja1');
+    XLSX.writeFile(wb, S.name||'hoja.xlsx');
+    if(typeof toast==='function')toast('✅ Hoja exportada como XLSX');
+  }
+
+  /* Integración: recibir datos de otros módulos (ej. tabla extraída) */
+  function loadAoA(aoa, name){
+    const tab=document.querySelector('[data-panel="hojas"]');
+    if(tab)tab.click();
+    setTimeout(()=>{
+      mount();
+      S.data={};
+      (aoa||[]).forEach((row,r)=>{ if(r>=ROWS)return; (row||[]).forEach((val,c)=>{ if(c>=COLS)return; if(val!==''&&val!=null) setCell(r,c,{v:String(val)}); }); });
+      S.name=(name||'hoja')+'.xlsx';
+      renderGrid(); refreshValues();
+    },80);
+  }
+
+  function watch(){
+    const obs=new MutationObserver(()=>{ const p=$id('panel-hojas'); if(p&&p.classList.contains('active')&&!p.dataset.mounted)mount(); });
+    const main=document.querySelector('main')||document.querySelector('.main');
+    if(main)obs.observe(main,{subtree:true,attributes:true,attributeFilter:['class']});
+  }
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',watch);
+  else watch();
+
+  window.MFSheet={ loadAoA };
 })();
 </script>
 
