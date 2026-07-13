@@ -5367,7 +5367,7 @@ No incluyas explicaciones, solo el documento.`;
     fileName:'documento.pdf',
     rendering:false,
     idSeq:1,
-    style:{ color:'#1f2937', fill:'#fef08a', stroke:'#dc2626', fontSize:14, strokeW:2, opacity:1 },
+    style:{ color:'#1f2937', fill:'#fef08a', stroke:'#dc2626', fontSize:14, strokeW:2, opacity:1, fontFamily:'Helvetica', bold:false, italic:false, underline:false },
   };
 
   /* ══════════════ COMMAND STACK (undo/redo) ══════════════ */
@@ -5695,11 +5695,22 @@ No incluyas explicaciones, solo el documento.`;
         <button class="p3-btn" data-tool="image">🖼 Imagen</button>
         <input type="file" id="p3ImgFile" accept="image/*" style="display:none">
       </div>
-      <div class="p3-sep"></div><span class="p3-lbl">Estilo</span>
+      <div class="p3-sep"></div><span class="p3-lbl">Estilo texto</span>
+      <div class="p3-g">
+        <select class="p3-sel" id="p3FontDef" title="Tipo de letra" style="padding:5px 7px;border:1px solid #e5e7eb;border-radius:6px;font-size:12px;font-family:inherit;background:#fff;cursor:pointer">
+          <option value="Helvetica">Helvetica</option>
+          <option value="Times">Times</option>
+          <option value="Courier">Courier</option>
+        </select>
+        <input type="number" class="p3-num" id="p3FSize" value="${S.style.fontSize}" min="8" max="72" title="Tamaño de fuente">
+        <button class="p3-btn ${S.style.bold?'active':''}" id="p3BoldDef" title="Negrita" style="font-weight:800;padding:5px 9px">B</button>
+        <button class="p3-btn ${S.style.italic?'active':''}" id="p3ItalDef" title="Cursiva" style="font-style:italic;padding:5px 9px">I</button>
+        <button class="p3-btn ${S.style.underline?'active':''}" id="p3UndDef" title="Subrayado" style="text-decoration:underline;padding:5px 9px">U</button>
+      </div>
+      <div class="p3-sep"></div><span class="p3-lbl">Color</span>
       <div class="p3-g">
         <input type="color" class="p3-color" id="p3ColText" value="${S.style.color}" title="Color de texto/trazo">
         <input type="color" class="p3-color" id="p3ColFill" value="${S.style.fill}" title="Color de relleno/resaltado">
-        <input type="number" class="p3-num" id="p3FSize" value="${S.style.fontSize}" min="8" max="72" title="Tamaño de fuente">
       </div>`;
     }
 
@@ -5811,6 +5822,7 @@ No incluyas explicaciones, solo el documento.`;
       el.style.fontFamily = ({Helvetica:'Helvetica,Arial,sans-serif',Times:'\'Times New Roman\',Times,serif',Courier:'\'Courier New\',Courier,monospace'})[o.fontFamily||'Helvetica'];
       el.style.fontWeight = o.bold ? '700' : '400';
       el.style.fontStyle = o.italic ? 'italic' : 'normal';
+      el.style.textDecoration = o.underline ? 'underline' : 'none';
       el.style.textAlign = o.align || 'left';
       el.style.height = 'auto';
       el.style.minHeight = (o.fontSize||14)*1.3+'px';
@@ -6138,6 +6150,7 @@ No incluyas explicaciones, solo el documento.`;
         <div class="p3-pctl" style="margin-bottom:6px">
           <button class="p3-pbtn" id="p3pBold" style="font-weight:800;${o.bold?'background:#dbeafe;border-color:#3b82f6':''}">B</button>
           <button class="p3-pbtn" id="p3pItal" style="font-style:italic;${o.italic?'background:#dbeafe;border-color:#3b82f6':''}">I</button>
+          <button class="p3-pbtn" id="p3pUnd" style="text-decoration:underline;${o.underline?'background:#dbeafe;border-color:#3b82f6':''}">U</button>
           <button class="p3-pbtn" id="p3pAL" ${(o.align||'left')==='left'?'style="background:#dbeafe;border-color:#3b82f6"':''}>⇤</button>
           <button class="p3-pbtn" id="p3pAC" ${o.align==='center'?'style="background:#dbeafe;border-color:#3b82f6"':''}>⇹</button>
           <button class="p3-pbtn" id="p3pAR" ${o.align==='right'?'style="background:#dbeafe;border-color:#3b82f6"':''}>⇥</button>
@@ -6181,6 +6194,7 @@ No incluyas explicaciones, solo el documento.`;
     const ff=$id('p3pFF'); if(ff) ff.onchange=()=>{ o.fontFamily=ff.value; applyObj(o); };
     const bd=$id('p3pBold'); if(bd) bd.onclick=()=>{ o.bold=!o.bold; applyObj(o); showProps(o); };
     const it=$id('p3pItal'); if(it) it.onclick=()=>{ o.italic=!o.italic; applyObj(o); showProps(o); };
+    const un=$id('p3pUnd'); if(un) un.onclick=()=>{ o.underline=!o.underline; applyObj(o); showProps(o); };
     const al=$id('p3pAL'), ac=$id('p3pAC'), ar=$id('p3pAR');
     if(al) al.onclick=()=>{ o.align='left'; applyObj(o); showProps(o); };
     if(ac) ac.onclick=()=>{ o.align='center'; applyObj(o); showProps(o); };
@@ -6228,7 +6242,7 @@ No incluyas explicaciones, solo el documento.`;
 
       if (S.tool === 'text') {
         const r = ol.getBoundingClientRect();
-        const o = newObj('text', { x:e.clientX-r.left, y:e.clientY-r.top - S.style.fontSize/2, w:180, h:S.style.fontSize*1.5, text:'', color:S.style.color, fontSize:S.style.fontSize, fontFamily:'Helvetica', align:'left' });
+        const o = newObj('text', { x:e.clientX-r.left, y:e.clientY-r.top - S.style.fontSize/2, w:180, h:S.style.fontSize*1.5, text:'', color:S.style.color, fontSize:S.style.fontSize, fontFamily:S.style.fontFamily||'Helvetica', bold:S.style.bold||false, italic:S.style.italic||false, underline:S.style.underline||false, align:'left' });
         (S.objects[S.current]=S.objects[S.current]||[]).push(o);
         Cmd.push(makeAddCmd(S.current,o));
         S.selected = o;
@@ -6473,20 +6487,27 @@ No incluyas explicaciones, solo el documento.`;
             if (o.text) {
               const fnt = await resolveFont(o);
               const sz  = (o.fontSize||14)/z;
+              const tx = o.x/z, ty = height-(o.y/z)-sz*0.92;
               pg.drawText(String(o.text).slice(0,1000), {
-                x:o.x/z, y:height-(o.y/z)-sz*0.92,
-                size:sz, font:fnt, color:hexRgb(o.color||'#111827'), opacity:op,
-                lineHeight:sz*1.3,
+                x:tx, y:ty, size:sz, font:fnt, color:hexRgb(o.color||'#111827'), opacity:op, lineHeight:sz*1.3,
               });
+              if (o.underline) {
+                const tw = fnt.widthOfTextAtSize(String(o.text), sz);
+                pg.drawLine({ start:{x:tx,y:ty-sz*0.14}, end:{x:tx+tw,y:ty-sz*0.14}, thickness:Math.max(0.6,sz*0.06), color:hexRgb(o.color||'#111827'), opacity:op });
+              }
             }
           } else if (o.type==='text' && o.text) {
             const fnt = await resolveFont(o);
             const sz  = (o.fontSize||14)/z;
+            const tx = alignX(o,fnt,sz), ty = height-(o.y/z)-sz*1.05;
             pg.drawText(String(o.text).slice(0,1000), {
-              x:alignX(o,fnt,sz), y:height-(o.y/z)-sz*1.05,
-              size:sz, font:fnt, color:hexRgb(o.color), opacity:op,
-              lineHeight:sz*1.3,
+              x:tx, y:ty, size:sz, font:fnt, color:hexRgb(o.color), opacity:op, lineHeight:sz*1.3,
             });
+            if (o.underline) {
+              const firstLine = String(o.text).split('\n')[0];
+              const tw = fnt.widthOfTextAtSize(firstLine, sz);
+              pg.drawLine({ start:{x:tx,y:ty-sz*0.14}, end:{x:tx+tw,y:ty-sz*0.14}, thickness:Math.max(0.6,sz*0.06), color:hexRgb(o.color), opacity:op });
+            }
           } else if (o.type==='highlight') {
             pg.drawRectangle({ x:o.x/z, y:height-(o.y+o.h)/z, width:o.w/z, height:o.h/z, color:hexRgb(o.fill||'#fef08a'), opacity:0.4*op });
           } else if (o.type==='rect') {
@@ -6575,9 +6596,15 @@ No incluyas explicaciones, solo el documento.`;
     if (imgF) imgF.onchange = e => { if(e.target.files[0]) insertImage(e.target.files[0]); e.target.value=''; };
 
     const colT=$id('p3ColText'), colF=$id('p3ColFill'), fsz=$id('p3FSize');
-    if(colT) colT.oninput=()=>{ S.style.color=colT.value; S.style.stroke=colT.value; };
-    if(colF) colF.oninput=()=>{ S.style.fill=colF.value; };
-    if(fsz)  fsz.oninput=()=>{ S.style.fontSize=parseInt(fsz.value)||14; };
+    if(colT) colT.oninput=()=>{ S.style.color=colT.value; S.style.stroke=colT.value; if(S.selected&&(S.selected.type==='text'||S.selected.type==='textedit')){S.selected.color=colT.value;renderObjects();} };
+    if(colF) colF.oninput=()=>{ S.style.fill=colF.value; if(S.selected&&S.selected.type==='highlight'){S.selected.fill=colF.value;renderObjects();} };
+    if(fsz)  fsz.oninput=()=>{ S.style.fontSize=parseInt(fsz.value)||14; if(S.selected&&(S.selected.type==='text'||S.selected.type==='textedit')){S.selected.fontSize=parseInt(fsz.value)||14;renderObjects();} };
+    const fontD=$id('p3FontDef'), boldD=$id('p3BoldDef'), italD=$id('p3ItalDef'), undD=$id('p3UndDef');
+    const applyToSel=(prop,val)=>{ if(S.selected&&(S.selected.type==='text'||S.selected.type==='textedit')){ S.selected[prop]=val; renderObjects(); if(S.selected)showProps(S.selected); } };
+    if(fontD) fontD.onchange=()=>{ S.style.fontFamily=fontD.value; applyToSel('fontFamily',fontD.value); };
+    if(boldD) boldD.onclick=()=>{ S.style.bold=!S.style.bold; boldD.classList.toggle('active',S.style.bold); applyToSel('bold',S.style.bold); };
+    if(italD) italD.onclick=()=>{ S.style.italic=!S.style.italic; italD.classList.toggle('active',S.style.italic); applyToSel('italic',S.style.italic); };
+    if(undD)  undD.onclick=()=>{ S.style.underline=!S.style.underline; undD.classList.toggle('active',S.style.underline); applyToSel('underline',S.style.underline); };
   }
 
   /* Keyboard shortcuts */
