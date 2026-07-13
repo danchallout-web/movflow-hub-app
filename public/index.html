@@ -7519,6 +7519,113 @@ Firma: ____________________
 })();
 </script>
 
+<!-- ═══ MovFlow · Analizador IA Previo ═══ -->
+<script>
+(function(){
+  'use strict';
+  if (window.__MF_PREANALYZER__) return;
+  window.__MF_PREANALYZER__ = true;
+
+  const esc = s => String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+  const MFPreAnalyzer = {
+    /* Analiza la fuente (email/carpeta) y devuelve lista de posibles problemas */
+    async analyze(src, templateId) {
+      const issues = [];
+      /* Reunir el texto del documento */
+      let text = '', subject = '', from = '';
+      if (src.email) {
+        text = src.email.body || src.email.snippet || '';
+        subject = src.email.subject || '';
+        from = src.email.fromName || src.email.fromEmail || '';
+      } else if (src.emails && src.emails.length) {
+        text = src.emails.map(e=>e.body||e.snippet||'').join('\n\n');
+        subject = src.emails.length + ' emails';
+      }
+
+      /* ── Detección local (rápida, sin coste) ── */
+      if (!text || text.trim().length < 20)
+        issues.push({ tipo:'crítico', campo:'Contenido', detalle:'El documento apenas contiene texto. Puede ser un adjunto no procesado o un email vacío.' });
+      if (!from)
+        issues.push({ tipo:'aviso', campo:'Remitente', detalle:'No se ha identificado el remitente.' });
+
+      const hasAmount = /\b\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?\s*(?:€|EUR|euros?)\b/i.test(text);
+      const hasDate   = /\b\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}\b|\b\d{1,2}\s+de\s+[a-záéíóúñ]+/i.test(text);
+      const mentionsInvoice = /factura|presupuesto|contrato|importe|pago|total/i.test(text+' '+subject);
+      if (mentionsInvoice && !hasAmount)
+        issues.push({ tipo:'aviso', campo:'Importe', detalle:'El documento parece económico pero no se detectan importes claros (€).' });
+      if (mentionsInvoice && !hasDate)
+        issues.push({ tipo:'aviso', campo:'Fecha', detalle:'No se detectan fechas, habituales en este tipo de documento.' });
+
+      /* ── Análisis IA (Groq) para dudas más finas ── */
+      try {
+        const prompt = `Eres un revisor de documentos. Analiza este texto y detecta SOLO problemas reales antes de extraer datos: campos importantes que falten, datos ambiguos o posibles errores.
+Texto (asunto: "${subject}", de: "${from}"):
+"""${text.slice(0,1500)}"""
+
+Responde SOLO con un JSON array (máx 4 elementos), cada uno: {"tipo":"aviso|crítico","campo":"...","detalle":"..."}. Si no hay problemas, responde [].`;
+        const r = await fetch('/.netlify/functions/extract',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt,mode:'template_mapping'})});
+        if (r.ok) {
+          const data = await r.json();
+          const raw = data.mapping?._raw || (typeof data.mapping==='string'?data.mapping:'');
+          const m = raw.match(/\[[\s\S]*\]/);
+          if (m) {
+            const aiIssues = JSON.parse(m[0]);
+            if (Array.isArray(aiIssues)) aiIssues.slice(0,4).forEach(i=>{
+              if (i && i.detalle) issues.push({ tipo:i.tipo==='crítico'?'crítico':'aviso', campo:i.campo||'General', detalle:i.detalle, ai:true });
+            });
+          }
+        }
+      } catch(_) {}
+
+      return issues;
+    },
+
+    /* Muestra el aviso interactivo. Devuelve 'continue' | 'cancel' */
+    showDialog(issues) {
+      return new Promise(resolve => {
+        const crit = issues.filter(i=>i.tipo==='crítico').length;
+        const ov = document.createElement('div');
+        ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:10000;display:flex;align-items:center;justify-content:center;padding:20px';
+        const rows = issues.map(i=>{
+          const color = i.tipo==='crítico' ? '#dc2626' : '#d97706';
+          const bg    = i.tipo==='crítico' ? '#fef2f2' : '#fffbeb';
+          const icon  = i.tipo==='crítico' ? '⛔' : '⚠️';
+          return `<div style="display:flex;gap:10px;padding:11px 13px;background:${bg};border-radius:9px;margin-bottom:7px">
+            <span style="font-size:15px">${icon}</span>
+            <div><div style="font-size:12.5px;font-weight:700;color:${color}">${esc(i.campo)}${i.ai?' <span style="font-size:9px;background:#e0e7ff;color:#4338ca;padding:1px 5px;border-radius:3px;vertical-align:middle">IA</span>':''}</div>
+            <div style="font-size:12.5px;color:#374151;line-height:1.45;margin-top:2px">${esc(i.detalle)}</div></div>
+          </div>`;
+        }).join('');
+        ov.innerHTML=`<div style="background:var(--bg-card,#fff);border-radius:14px;width:min(540px,96vw);max-height:88vh;overflow:hidden;box-shadow:0 16px 48px rgba(0,0,0,.26);display:flex;flex-direction:column">
+          <div style="padding:18px 22px;border-bottom:1px solid var(--border)">
+            <div style="font-size:16px;font-weight:800;color:var(--text)">🔍 Análisis previo del documento</div>
+            <div style="font-size:12.5px;color:var(--text-3);margin-top:3px">He analizado este documento y he encontrado ${issues.length} ${issues.length===1?'posible problema':'posibles problemas'}${crit?` (${crit} crítico${crit>1?'s':''})`:''}:</div>
+          </div>
+          <div style="padding:16px 22px;overflow:auto;flex:1">${rows}</div>
+          <div style="padding:14px 22px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">
+            <button id="paCancel" style="padding:9px 16px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--text-2);font-size:13px;cursor:pointer;font-family:inherit">Cancelar</button>
+            <button id="paReview" style="padding:9px 16px;border-radius:8px;border:1px solid var(--accent);background:transparent;color:var(--accent);font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">Revisar el email</button>
+            <button id="paContinue" style="padding:9px 16px;border-radius:8px;border:none;background:${crit?'#dc2626':'var(--accent)'};color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">Continuar de todos modos</button>
+          </div>
+        </div>`;
+        document.body.appendChild(ov);
+        const close = v => { ov.remove(); resolve(v); };
+        ov.querySelector('#paCancel').onclick   = () => close('cancel');
+        ov.querySelector('#paContinue').onclick = () => close('continue');
+        ov.querySelector('#paReview').onclick   = () => {
+          /* Llevar al email en Recepción para corregir/revisar */
+          close('cancel');
+          const tab = document.querySelector('[data-panel="emails"]');
+          if (tab) tab.click();
+        };
+      });
+    },
+  };
+  window.MFPreAnalyzer = MFPreAnalyzer;
+})();
+</script>
+
 <!-- ═══ MovFlow Pipeline v2 · Gestor de Plantillas ═══ -->
 <script>
 /* ═══════════════════════════════════════════════════════════════════════
@@ -8606,6 +8713,21 @@ Responde ÚNICAMENTE con el objeto JSON. Sin explicaciones adicionales.`;
 
       const templateId = $('mfpTplSelect').value || null;
       const useAI      = $('mfpUseAI').checked;
+
+      /* ── Analizador IA previo: revisa el documento antes de extraer ── */
+      if (useAI && !this._skipPreCheck) {
+        res.innerHTML = '<div style="color:var(--text-3);font-size:13px;padding:10px 0">🔍 Analizando el documento antes de extraer…</div>';
+        try {
+          const issues = await MFPreAnalyzer.analyze(src, templateId);
+          if (issues && issues.length) {
+            const proceed = await MFPreAnalyzer.showDialog(issues);
+            if (proceed === 'cancel') { res.innerHTML = ''; return; }
+            /* 'continue' o 'corrected' → seguimos */
+          }
+        } catch(_) { /* si el análisis falla, continuamos normalmente */ }
+      }
+      this._skipPreCheck = false;
+
       res.innerHTML    = '<div style="color:var(--text-3);font-size:13px;padding:10px 0">⏳ Procesando…</div>';
       this._markSteps([]);
 
