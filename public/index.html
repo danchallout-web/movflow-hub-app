@@ -6943,6 +6943,12 @@ Firma: ____________________
   .wd-page h1{font-size:24px;margin:.6em 0 .4em}.wd-page h2{font-size:19px;margin:.6em 0 .35em}
   .wd-page ul,.wd-page ol{padding-left:26px}
   .wd-page p{margin:.4em 0}
+  .wd-page blockquote{border-left:3px solid #cbd5e1;margin:.6em 0;padding:.2em 0 .2em 14px;color:#475569;font-style:italic}
+  .wd-page pre{background:#f3f4f6;padding:10px 14px;border-radius:6px;font-family:'Courier New',monospace;font-size:13px;overflow-x:auto}
+  .wd-page hr{border:none;border-top:1px solid #d1d5db;margin:1em 0}
+  .wd-table{border-collapse:collapse;width:100%;margin:.6em 0}
+  .wd-table td{border:1px solid #94a3b8;padding:6px 9px;min-width:40px;vertical-align:top}
+  .wd-table td:focus{outline:2px solid #3b82f6;outline-offset:-2px}
   .wd-status{background:#fff;border-top:1px solid #e5e7eb;padding:4px 14px;font-size:11px;color:#9ca3af;flex-shrink:0}
   @media(max-width:700px){.wd-docs{width:120px;min-width:120px}.wd-page{padding:30px 24px}.wd-cv{padding:10px}}`;
   (function(){ const st=document.createElement('style'); st.textContent=CSS; document.head.appendChild(st); })();
@@ -6980,32 +6986,68 @@ Firma: ____________________
       </div>
       <div class="wd-sep"></div>
       <div class="wd-g">
-        <select class="wd-sel" id="wdBlock">
+        <select class="wd-sel" id="wdBlock" title="Estilo de párrafo">
           <option value="p">Párrafo</option><option value="h1">Título 1</option>
           <option value="h2">Título 2</option><option value="h3">Título 3</option>
+          <option value="blockquote">Cita</option><option value="pre">Código</option>
         </select>
-        <select class="wd-sel" id="wdSize">
-          <option value="2">Pequeño</option><option value="3" selected>Normal</option>
-          <option value="4">Grande</option><option value="5">Muy grande</option>
+        <select class="wd-sel" id="wdFont" title="Tipo de letra" style="min-width:120px">
+          <option value="Georgia, serif">Georgia</option>
+          <option value="'Times New Roman', serif">Times New Roman</option>
+          <option value="Arial, sans-serif">Arial</option>
+          <option value="Calibri, 'Segoe UI', sans-serif">Calibri</option>
+          <option value="Verdana, sans-serif">Verdana</option>
+          <option value="'Courier New', monospace">Courier New</option>
+          <option value="'Trebuchet MS', sans-serif">Trebuchet</option>
+        </select>
+        <select class="wd-sel" id="wdSize" title="Tamaño de letra">
+          <option value="8">8</option><option value="9">9</option><option value="10">10</option>
+          <option value="11" selected>11</option><option value="12">12</option><option value="14">14</option>
+          <option value="16">16</option><option value="18">18</option><option value="20">20</option>
+          <option value="24">24</option><option value="28">28</option><option value="36">36</option>
         </select>
       </div>
       <div class="wd-sep"></div>
       <div class="wd-g">
-        <button class="wd-btn b" data-cmd="bold">B</button>
-        <button class="wd-btn i" data-cmd="italic">I</button>
-        <button class="wd-btn u" data-cmd="underline">U</button>
-        <input type="color" id="wdColor" value="#1f2937" style="width:26px;height:26px;border:1px solid #e5e7eb;border-radius:6px;cursor:pointer;padding:1px;background:#fff" title="Color de texto">
+        <button class="wd-btn b" data-cmd="bold" title="Negrita (Ctrl+B)">B</button>
+        <button class="wd-btn i" data-cmd="italic" title="Cursiva (Ctrl+I)">I</button>
+        <button class="wd-btn u" data-cmd="underline" title="Subrayado (Ctrl+U)">U</button>
+        <button class="wd-btn" data-cmd="strikeThrough" title="Tachado" style="text-decoration:line-through">S</button>
+        <label title="Color de texto" style="display:inline-flex;align-items:center;cursor:pointer"><input type="color" id="wdColor" value="#1f2937" style="width:26px;height:26px;border:1px solid #e5e7eb;border-radius:6px;cursor:pointer;padding:1px;background:#fff"></label>
+        <label title="Color de resaltado" style="display:inline-flex;align-items:center;cursor:pointer;position:relative"><span style="position:absolute;top:-3px;right:-2px;font-size:9px">🖍</span><input type="color" id="wdHilite" value="#fff176" style="width:26px;height:26px;border:1px solid #e5e7eb;border-radius:6px;cursor:pointer;padding:1px;background:#fff"></label>
       </div>
       <div class="wd-sep"></div>
       <div class="wd-g">
-        <button class="wd-btn" data-cmd="insertUnorderedList">• Lista</button>
-        <button class="wd-btn" data-cmd="insertOrderedList">1. Lista</button>
-        <button class="wd-btn" data-cmd="justifyLeft">⇤</button>
-        <button class="wd-btn" data-cmd="justifyCenter">⇹</button>
-        <button class="wd-btn" data-cmd="justifyRight">⇥</button>
+        <button class="wd-btn" data-cmd="insertUnorderedList" title="Lista con viñetas">• Lista</button>
+        <button class="wd-btn" data-cmd="insertOrderedList" title="Lista numerada">1. Lista</button>
+        <button class="wd-btn" data-cmd="justifyLeft" title="Alinear a la izquierda">⇤</button>
+        <button class="wd-btn" data-cmd="justifyCenter" title="Centrar">⇹</button>
+        <button class="wd-btn" data-cmd="justifyRight" title="Alinear a la derecha">⇥</button>
+        <button class="wd-btn" data-cmd="justifyFull" title="Justificar">☰</button>
       </div>
       <div class="wd-sep"></div>
       <div class="wd-g">
+        <button class="wd-btn" data-cmd="outdent" title="Reducir sangría">⇤|</button>
+        <button class="wd-btn" data-cmd="indent" title="Aumentar sangría">|⇥</button>
+        <select class="wd-sel" id="wdLineH" title="Espaciado entre líneas">
+          <option value="">Interlineado</option>
+          <option value="1">Sencillo</option><option value="1.5">1,5</option>
+          <option value="2">Doble</option><option value="2.5">2,5</option>
+        </select>
+      </div>
+      <div class="wd-sep"></div>
+      <div class="wd-g">
+        <button class="wd-btn" id="wdTable" title="Insertar tabla">▦ Tabla</button>
+        <button class="wd-btn" id="wdHr" title="Línea horizontal">— Línea</button>
+        <button class="wd-btn" data-cmd="removeFormat" title="Quitar formato">✕ Formato</button>
+      </div>
+      <div class="wd-sep"></div>
+      <div class="wd-g">
+        <select class="wd-sel" id="wdMargin" title="Márgenes de página">
+          <option value="60px 70px">Márgenes normales</option>
+          <option value="40px 48px">Márgenes estrechos</option>
+          <option value="80px 96px">Márgenes amplios</option>
+        </select>
         <button class="wd-btn" id="wdSave">💾 Guardar</button>
         <button class="wd-btn success" id="wdPdf">📄 Exportar PDF</button>
       </div>
@@ -7028,16 +7070,64 @@ Firma: ____________________
       b.addEventListener('click', () => { document.execCommand(b.dataset.cmd, false, null); $id('wdPage').focus(); });
     });
     $id('wdBlock').addEventListener('change', function(){ document.execCommand('formatBlock', false, this.value); $id('wdPage').focus(); });
-    $id('wdSize').addEventListener('change', function(){ document.execCommand('fontSize', false, this.value); $id('wdPage').focus(); });
+    $id('wdFont').addEventListener('change', function(){ document.execCommand('fontName', false, this.value); $id('wdPage').focus(); });
+    /* Tamaño real en pt: aplicamos fontSize execCommand y luego reescalamos a pt exacto */
+    $id('wdSize').addEventListener('change', function(){
+      const pt = this.value;
+      document.execCommand('fontSize', false, '7'); // marca temporal
+      const marks = $id('wdPage').querySelectorAll('font[size="7"]');
+      marks.forEach(m => { m.removeAttribute('size'); m.style.fontSize = pt + 'pt'; });
+      $id('wdPage').focus();
+    });
     $id('wdColor').addEventListener('input', function(){ document.execCommand('foreColor', false, this.value); });
+    $id('wdHilite').addEventListener('input', function(){ document.execCommand('hiliteColor', false, this.value) || document.execCommand('backColor', false, this.value); });
+    $id('wdLineH').addEventListener('change', function(){
+      if (!this.value) return;
+      const sel = window.getSelection();
+      if (sel.rangeCount) {
+        let node = sel.anchorNode;
+        while (node && node.nodeType === 3) node = node.parentNode;
+        /* Aplicar a todos los bloques de la selección */
+        let block = node;
+        while (block && block !== $id('wdPage') && !/^(P|DIV|H1|H2|H3|LI|BLOCKQUOTE|PRE)$/.test(block.tagName)) block = block.parentNode;
+        if (block && block !== $id('wdPage')) block.style.lineHeight = this.value;
+      }
+      $id('wdPage').focus();
+    });
+    /* Tabla básica */
+    $id('wdTable').addEventListener('click', () => insertTable());
+    $id('wdHr').addEventListener('click', () => { document.execCommand('insertHorizontalRule'); $id('wdPage').focus(); });
     $id('wdNew').addEventListener('click', newDoc);
     $id('wdOpen').addEventListener('click', () => $id('wdFile').click());
     $id('wdFile').addEventListener('change', e => { if(e.target.files[0]) openDocx(e.target.files[0]); e.target.value=''; });
     $id('wdSave').addEventListener('click', saveDoc);
     $id('wdPdf').addEventListener('click', exportPdf);
+    $id('wdMargin').addEventListener('change', function(){ $id('wdPage').style.padding = this.value; });
     $id('wdPage').addEventListener('input', () => { W.dirty=true; $id('wdSt').textContent='Cambios sin guardar'; });
+    /* Atajos de teclado estilo Word */
+    $id('wdPage').addEventListener('keydown', ev => {
+      if (ev.ctrlKey || ev.metaKey) {
+        if (ev.key === 's') { ev.preventDefault(); saveDoc(); }
+        /* B/I/U los gestiona el navegador nativamente en contenteditable */
+      }
+    });
     /* Autoguardado cada 30s si hay cambios */
     setInterval(() => { if (W.dirty && W.docId) saveDoc(true); }, 30000);
+  }
+
+  function insertTable() {
+    const rows = parseInt(prompt('Número de filas:', '3')) || 0;
+    const cols = parseInt(prompt('Número de columnas:', '3')) || 0;
+    if (rows < 1 || cols < 1 || rows > 30 || cols > 12) { if(rows||cols) alert('Rango válido: 1–30 filas, 1–12 columnas.'); return; }
+    let html = '<table class="wd-table"><tbody>';
+    for (let r = 0; r < rows; r++) {
+      html += '<tr>';
+      for (let cc = 0; cc < cols; cc++) html += '<td>&nbsp;</td>';
+      html += '</tr>';
+    }
+    html += '</tbody></table><p><br></p>';
+    $id('wdPage').focus();
+    document.execCommand('insertHTML', false, html);
   }
 
   function newDoc() {
@@ -7109,7 +7199,12 @@ Firma: ____________________
     const w=window.open('','_blank','width=820,height=980');
     w.document.write(`<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><title>${esc(name)}</title><style>
       body{font-family:Georgia,'Times New Roman',serif;font-size:12.5pt;line-height:1.7;color:#111;max-width:720px;margin:0 auto;padding:40px 50px}
-      h1{font-size:20pt}h2{font-size:16pt}ul,ol{padding-left:24px}
+      h1{font-size:20pt}h2{font-size:16pt}h3{font-size:14pt}ul,ol{padding-left:24px}
+      blockquote{border-left:3px solid #cbd5e1;margin:.6em 0;padding:.2em 0 .2em 14px;color:#475569;font-style:italic}
+      pre{background:#f3f4f6;padding:10px 14px;border-radius:6px;font-family:'Courier New',monospace;font-size:11pt}
+      hr{border:none;border-top:1px solid #999;margin:1em 0}
+      table{border-collapse:collapse;width:100%;margin:.6em 0}
+      td{border:1px solid #666;padding:6px 9px;vertical-align:top}
       @page{margin:2.2cm}@media print{body{padding:0}}
     </style></head><body>${$id('wdPage').innerHTML}<script>window.onload=()=>window.print();<\/script></body></html>`);
     w.document.close();
